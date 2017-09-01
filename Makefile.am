@@ -387,6 +387,12 @@ src_libdrivers_la_SOURCES += \
 	src/hardware/lecroy-xstream/protocol.c \
 	src/hardware/lecroy-xstream/api.c
 endif
+if HW_LITESCOPE
+src_libdrivers_la_SOURCES += \
+	src/hardware/litescope/protocol.h \
+	src/hardware/litescope/protocol.c \
+	src/hardware/litescope/api.c
+endif
 if HW_MANSON_HCS_3XXX
 src_libdrivers_la_SOURCES += \
 	src/hardware/manson-hcs-3xxx/protocol.h \

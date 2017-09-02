@@ -751,6 +751,13 @@ enum sr_configkey {
 	 */
 	SR_CONF_MODBUSADDR,
 
+	/**
+	 * Driver config directory. Contains files needed to configure the
+	 * driver (such as register maps and such). Generally used when the
+	 * driver can't autoconfigure from device itself.
+	 */
+	SR_CONF_CONFIGDIR,
+
 	/* Update sr_key_info_config[] (hwdriver.c) upon changes! */
 
 	/*--- Device (or channel group) configuration -----------------------*/

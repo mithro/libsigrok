@@ -28,6 +28,7 @@
 #define LOG_PREFIX "litescope"
 
 struct dev_context {
+	struct sr_channel_group **channel_groups;
 };
 
 SR_PRIV int litescope_receive_data(int fd, int revents, void *cb_data);

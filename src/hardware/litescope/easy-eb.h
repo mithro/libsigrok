@@ -13,6 +13,8 @@
 	#define print_debug(...) {}
 #endif
 
+#include <stdint.h>
+
 #define ETHERBONE_PORT 1234
 
 #define ETHERBONE_MAGIC 	0x4e6f
@@ -23,8 +25,8 @@
 #define ETHERBONE_64BITS 	0x8
 
 enum etherbone_type {
-	ETHERBONE_READ = 1;
-	ETHERBONE_WRITE = 2;
+	ETHERBONE_READ = 1,
+	ETHERBONE_WRITE = 2,
 };
 
 #define ETHERBONE_HEADER_LENGTH 12
@@ -46,7 +48,7 @@ struct etherbone_record_header {
     unsigned int wca: 		1;  // WriteToCfgSpace  - (W)rite to (C)onfig (A)dress
     unsigned int wff: 		1;  // WriteFIFO        - (W)rite (F)I(F)O
     unsigned int reserved2:	1;
-    unsigned char byte_enable;      // Select
+    unsigned char bytes_enable;     // Select
     unsigned char wcount;           // Writes
     unsigned char rcount;           // Reads
     union {
@@ -67,7 +69,23 @@ struct etherbone_packet {
     uint32_t padding;
 
     struct etherbone_record_header record_hdr;
-    struct etherbone_record record[];
+    struct etherbone_record records[];
 } __attribute__((packed, aligned(8)));
+
+/**
+ * Calculate the size (in bytes) of an etherbone packet.
+ */
+size_t etherbone_size(const struct etherbone_packet* packet);
+
+/**
+ * Create a new etherbone packet of the type with the records.
+ */
+struct etherbone_packet* etherbone_new(enum etherbone_type type, size_t records);
+
+/**
+ * Extend an etherbone packet to now contain more records.
+ */
+struct etherbone_packet* etherbone_grow(struct etherbone_packet* packet, size_t add_records);
+
 
 #endif

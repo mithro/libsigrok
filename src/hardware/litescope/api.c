@@ -19,10 +19,17 @@
 
 #include <config.h>
 #include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+
+#include <linux/limits.h>
+
 #include "scpi.h"
 #include "protocol.h"
 
 #define LOG_PREFIX "litescope"
+
+#define BUFSIZE (16 * 1024)
 
 static struct sr_dev_driver litescope_driver_info;
 
@@ -87,8 +94,69 @@ static const int32_t trigger_matches[] = {
 	SR_TRIGGER_FALLING,
 };
 
-static struct csr_config* read_csr_config() {
+static struct csr_config* read_csr_config(const char* config_dir);
+static struct csr_config* read_csr_config(const char* config_dir) {
+	// construct the csr config file path
+	char csr_file[PATH_MAX];
+	strncpy(csr_file, config_dir, PATH_MAX);
+	strcpy(csr_file+strlen(csr_file), CSR_FILE);
 
+	sr_dbg("litescope::read_csr_config %s\n", csr_file);
+
+	// Get us a csv parser from sigork's input subsystem
+	const struct sr_input_module *csv_parser_module = sr_input_find("csv");
+	if (csv_parser_module == NULL) {
+		sr_err("Failed to find csv parser!?\n");
+		goto err;
+	}
+	struct sr_input *csv_parser = sr_input_new(csv_parser_module, NULL);
+	if (csv_parser == NULL) {
+		sr_err("Failed to find csv parser!?\n");
+		goto err;
+	}
+
+	// Open the csv file
+	FILE *stream;
+	GHashTable *meta;
+	uint8_t avail_metadata[8];
+	if (sr_input_open_file(csr_file, &stream, avail_metadata, &meta) == SR_ERR) {
+		sr_err("Failed to open CSR config csv: %s\n", csr_file);
+		goto err;
+	}
+
+	GString *header = g_hash_table_lookup(meta, GINT_TO_POINTER(SR_INPUT_META_HEADER));
+	if (sr_input_send(csv_parser, header) != SR_OK) {
+		sr_dbg("Failed at parsing header.");
+		goto err;
+	}
+
+	GString *buf;
+	buf = g_string_sized_new(BUFSIZE);
+	while (TRUE) {	
+		g_string_truncate(buf, 0);
+		size_t len = fread(buf->str, 1, BUFSIZE-1, stream);
+		if (len != BUFSIZE-1 && ferror(stream)) {
+			sr_err("Failed to read %s: %s", csr_file, g_strerror(errno));
+			goto err;
+		}
+		if (len == 0) {
+			/* End of file or stream. */
+			sr_dbg("EOF");
+			break;
+		}
+		g_string_set_size(buf, len);
+		if (sr_input_send(csv_parser, buf) != SR_OK) {
+			sr_dbg("Failed at parsing body.");
+			break;
+		}
+	}
+	sr_input_end(csv_parser);
+
+err:
+	g_string_free(header, TRUE);
+	g_hash_table_destroy(meta);
+	sr_input_free(csv_parser);
+	return NULL;
 }
 
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
@@ -96,9 +164,6 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	struct sr_dev_inst *sdi;
 	struct dev_context *devc;
 	//struct sr_scpi_hw_info *hw_info;
-
-	// Read in the CSR config file
-	// Read in the analyzer config file
 
 	sr_dbg("litescope::probe_device %p\n", scpi);
 
@@ -117,7 +182,27 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 
 static GSList *scan(struct sr_dev_driver *di, GSList *options)
 {
+	GSList *l;
 	sr_dbg("litescope::scan\n");
+
+	// Figure out the config dir
+	const char *config_dir = NULL;
+	for (l = options; l; l = l->next) {
+		struct sr_config *src = l->data;
+		switch (src->key) {
+		case SR_CONF_CONFIGDIR:
+			config_dir = g_variant_get_string(src->data, NULL);
+			sr_dbg("litescope::scan::config_dir %s\n", config_dir);
+			break;
+		}
+	}
+
+	// Read in the CSR config file
+	read_csr_config(config_dir);
+
+	// Read in the analyzer config file
+
+
 	return sr_scpi_scan(di->context, options, probe_device);
 //	
 //

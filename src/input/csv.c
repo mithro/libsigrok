@@ -20,6 +20,7 @@
 #include <config.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <glib.h>
 #include <libsigrok/libsigrok.h>
 #include "libsigrok-internal.h"
@@ -167,6 +168,8 @@ struct context {
 
 	/* Current line number. */
 	size_t line_number;
+
+	GHashTable* csr_table;
 };
 
 static void strip_comment(char *buf, const GString *prefix)
@@ -346,15 +349,118 @@ static char **parse_line(char *buf, struct context *inc, int max_columns)
 	return columns;
 }
 
+enum csr_type {
+	CSR_BASE = 1,
+	CSR_REGISTER,
+	CSR_CONSTANT,
+	CSR_MEM,
+};
+
+enum csr_mode {
+	CSR_RO = 0,
+	CSR_RW = 1
+};
+
+struct csr_entry {
+	enum csr_type  	type;
+	char* 		name;
+	uint32_t	addr;
+	uint32_t	width;
+	enum csr_mode   mode;
+};
+
+static void print_csr_entry(const struct csr_entry* csr) {
+	assert(csr);
+	const char* type = NULL;
+	switch(csr->type) {
+	case CSR_BASE:
+		type = "csr_base";
+		break;
+	case CSR_REGISTER:
+		type = "csr_reg";
+		break;
+	case CSR_CONSTANT:
+		type = "csr_const";
+		break;
+	case CSR_MEM:
+		type = "csr_mem";
+		break;
+	}
+	assert(type);
+	const char* mode = NULL;
+	switch(csr->mode) {
+	case CSR_RO:
+		mode = "ro";
+		break;
+	case CSR_RW:
+		mode = "rw";
+		break;
+	}
+	assert(mode);
+	sr_dbg("%s@%p(%s, %x, %d, %s)", csr->name, csr, type, csr->addr, csr->width, mode);
+}
+
 static int parse_multi_columns(char **columns, struct context *inc)
 {
 	gsize i;
 	char *column;
 
 	/* Clear buffer in order to set bits only. */
-	memset(inc->sample_buffer, 0, inc->sample_unit_size);
+	//memset(inc->sample_buffer, 0, inc->sample_unit_size);
 
+	struct csr_entry* csr = g_malloc0(sizeof(struct csr_entry));
 	for (i = 0; i < inc->num_channels; i++) {
+		column = columns[i];
+		//sr_dbg("%zu: %s\n", i, column);
+		switch (i) {
+		case 0:
+			if (strcmp(column, "csr_base") == 0) {
+				csr->type = CSR_BASE;
+			} else if (strcmp(column, "csr_register") == 0) {
+				csr->type = CSR_REGISTER;
+			} else if (strcmp(column, "constant") == 0) {
+				csr->type = CSR_REGISTER;
+			} else if (strcmp(column, "memory_region") == 0) {
+				csr->type = CSR_REGISTER;
+			} else {
+				sr_err("Invalid value '%s' in column %zu in line %zu.",
+					column, inc->first_channel + i,
+					inc->line_number);
+				return SR_ERR;
+			}
+			break;
+		case 1: {
+			int len = strlen(column);
+			csr->name = g_malloc0(len);
+			strcpy(csr->name, column);
+			csr->name[len] = '\0';
+			break;
+		}
+		case 2:
+			if (column[1] == 'x') {
+				sscanf(column, "%x", &(csr->addr));
+			} else {
+				sscanf(column, "%d", &(csr->addr));
+			}
+			break;
+		case 3:
+			sscanf(column, "%d", &(csr->width));
+			break;
+		case 4:
+			if (strcmp(column, "rw") == 0) {
+				csr->mode = CSR_RW;
+			} else {
+				csr->mode = CSR_RO;
+			}
+			print_csr_entry(csr);
+			assert(csr);
+			assert(inc->csr_table);
+			assert(csr->name);
+			g_hash_table_insert(inc->csr_table, csr->name, csr);
+			sr_dbg("h:%d\n", g_hash_table_size(inc->csr_table));
+			break;
+		}
+		/*
 		column = columns[i];
 		if (column[0] == '1') {
 			inc->sample_buffer[i / 8] |= (1 << (i % 8));
@@ -367,7 +473,7 @@ static int parse_multi_columns(char **columns, struct context *inc)
 				column, inc->first_channel + i,
 				inc->line_number);
 			return SR_ERR;
-		}
+		}*/
 	}
 
 	return SR_OK;
@@ -428,6 +534,7 @@ static int queue_samples(const struct sr_input *in)
 
 	inc = in->priv;
 
+	/*
 	inc->datafeed_buf_fill += inc->sample_unit_size;
 	if (inc->datafeed_buf_fill == inc->datafeed_buf_size) {
 		rc = flush_samples(in);
@@ -435,6 +542,7 @@ static int queue_samples(const struct sr_input *in)
 			return rc;
 	}
 	inc->sample_buffer = &inc->datafeed_buffer[inc->datafeed_buf_fill];
+	*/
 	return SR_OK;
 }
 
@@ -445,6 +553,8 @@ static int init(struct sr_input *in, GHashTable *options)
 
 	in->sdi = g_malloc0(sizeof(struct sr_dev_inst));
 	in->priv = inc = g_malloc0(sizeof(struct context));
+
+	inc->csr_table = g_hash_table_new(g_str_hash, g_str_equal);
 
 	inc->single_column = g_variant_get_int32(g_hash_table_lookup(options, "single-column"));
 	inc->multi_column_mode = inc->single_column == 0;
@@ -708,6 +818,7 @@ static int process_buffer(struct sr_input *in, gboolean is_eof)
 	char *p, **lines, *line, **columns;
 
 	inc = in->priv;
+/*
 	if (!inc->started) {
 		std_session_send_df_header(in->sdi);
 
@@ -724,7 +835,7 @@ static int process_buffer(struct sr_input *in, gboolean is_eof)
 
 		inc->started = TRUE;
 	}
-
+*/
 	/* Limit the number of columns to parse. */
 	if (inc->multi_column_mode)
 		max_columns = inc->num_channels;
@@ -871,6 +982,14 @@ static int end(struct sr_input *in)
 		ret = SR_OK;
 	if (ret != SR_OK)
 		return ret;
+
+	inc = in->priv;
+
+	struct csr_entry* ip1 = g_hash_table_lookup(inc->csr_table, "localip1");
+	struct csr_entry* ip2 = g_hash_table_lookup(inc->csr_table, "localip2");
+	struct csr_entry* ip3 = g_hash_table_lookup(inc->csr_table, "localip3");
+	struct csr_entry* ip4 = g_hash_table_lookup(inc->csr_table, "localip4");
+	sr_dbg("%d.%d.%d.%d\n", ip1->addr, ip2->addr, ip3->addr, ip4->addr);
 
 	ret = flush_samples(in);
 	if (ret != SR_OK)

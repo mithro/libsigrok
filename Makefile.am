@@ -391,7 +391,9 @@ if HW_LITESCOPE
 src_libdrivers_la_SOURCES += \
 	src/hardware/litescope/protocol.h \
 	src/hardware/litescope/protocol.c \
-	src/hardware/litescope/api.c
+	src/hardware/litescope/api.c \
+	src/hardware/litescope/easy-eb.h \
+	src/hardware/litescope/easy-eb.c
 endif
 if HW_MANSON_HCS_3XXX
 src_libdrivers_la_SOURCES += \

@@ -1,4 +1,5 @@
 
+#include <stdbool.h>
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
@@ -7,123 +8,131 @@
 
 #include "easy-eb.h"
 
+static size_t _etherbone_record_values(const struct etherbone_packet* pkt) {
+	return pkt->records[0].hdr.wcount + pkt->records[0].hdr.rcount;
+}
+
 /**
  * Calculate the size (in bytes) of an etherbone packet with the given number
  * of records.
  */
-inline size_t _etherbone_size(size_t records) {
-	return sizeof(struct etherbone_record_header) + sizeof(struct etherbone_record)*records;
+static size_t _etherbone_size(size_t record_values) {
+	return ETHERBONE_PACKET_HEADER_LENGTH +
+		(ETHERBONE_RECORD_HEADER_LENGTH + ETHERBONE_RECORD_VALUE_LENGTH*record_values);
 }
+
+#if __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+#include <arpa/inet.h>
+
+static void _etherbone_records_htobe(struct etherbone_packet* pkt) {
+	pkt->records[0].hdr.base_raw_addr = htonl(pkt->records[0].hdr.base_raw_addr);
+	size_t num_values = _etherbone_record_values(pkt);
+	for(size_t i = 0; i < num_values; i++) {
+		pkt->records[0].values[i].raw = htonl(pkt->records[0].values[i].raw);
+	}
+}
+struct etherbone_packet* etherbone_htobe(struct etherbone_packet* pkt) {
+	// Header
+	pkt->hdr.magic = htons(pkt->hdr.magic);
+	// records[0]
+	_etherbone_records_htobe(pkt);
+	return pkt;
+}
+
+static void _etherbone_records_betoh(struct etherbone_packet* pkt) {
+	pkt->records[0].hdr.base_raw_addr = ntohl(pkt->records[0].hdr.base_raw_addr);
+	size_t num_values = _etherbone_record_values(pkt);
+	for(size_t i = 0; i < num_values; i++) {
+		pkt->records[0].values[i].raw = ntohl(pkt->records[0].values[i].raw);
+	}
+}
+struct etherbone_packet* etherbone_betoh(struct etherbone_packet* pkt) {
+	// Header
+	pkt->hdr.magic = ntohs(pkt->hdr.magic);
+	// records[0]
+	_etherbone_records_betoh(pkt);
+	return pkt;
+}
+#else
+struct etherbone* etherbone_htobe(struct etherbone* pkt) {}
+struct etherbone* etherbone_betoh(struct etherbone* pkt) {}
+#endif
 
 /**
  * Calculate the size (in bytes) of an etherbone packet.
  */
-size_t etherbone_size(const struct etherbone_packet* packet) {
-	return _etherbone_size(packet->record_hdr.rcount + packet->record_hdr.wcount);
+size_t etherbone_size(const struct etherbone_packet* pkt) {
+	return _etherbone_size(_etherbone_record_values(pkt));
 }
 
-struct etherbone_packet* etherbone_new(enum etherbone_type type, size_t records) {
-	struct etherbone_packet* tx_packet = malloc(_etherbone_size(records));
-	tx_packet->magic 	= ETHERBONE_MAGIC;
-	tx_packet->version	= ETHERBONE_VERSION;
-	tx_packet->no_reads	= 0;
-	tx_packet->probe_reply	= 0;
-	tx_packet->probe_flag	= 0;
-	tx_packet->addr_size	= ETHERBONE_32BITS;
-	tx_packet->port_size 	= ETHERBONE_32BITS;
+struct etherbone_packet* etherbone_new(enum etherbone_type type, size_t record_values) {
+	struct etherbone_packet* pkt = malloc(_etherbone_size(record_values));
+	pkt->hdr.magic		= ETHERBONE_MAGIC;
+	pkt->hdr.version	= ETHERBONE_VERSION;
+	pkt->hdr.no_reads	= 0;
+	pkt->hdr.probe_reply	= 0;
+	pkt->hdr.probe_flag	= 0;
+	pkt->hdr.addr_size	= ETHERBONE_32BITS;
+	pkt->hdr.port_size 	= ETHERBONE_32BITS;
 
 	// Enable reading all 32bits
-	tx_packet->record_hdr.bytes_enable = 0xf;
+	pkt->records[0].hdr.bca = 0;
+	pkt->records[0].hdr.rca = 0;
+	pkt->records[0].hdr.rff = 0;
+	pkt->records[0].hdr.reserved = 0;
+	pkt->records[0].hdr.cyc = 0;
+	pkt->records[0].hdr.wca = 0;
+	pkt->records[0].hdr.wff = 0;
+	pkt->records[0].hdr.reserved2 = 0;
+	pkt->records[0].hdr.bytes_enable = 0xff;
 
-	// rcount / wcount are in bytes
+	pkt->records[0].hdr.base_ret_addr = 0;
 	switch(type) {
 	case ETHERBONE_READ:
-		tx_packet->record_hdr.rcount = records * 4;
-		tx_packet->record_hdr.wcount = 0;
+		pkt->records[0].hdr.rcount = record_values;
+		pkt->records[0].hdr.wcount = 0;
 		break;
 	case ETHERBONE_WRITE:
-		tx_packet->record_hdr.wcount = records * 4;
-		tx_packet->record_hdr.rcount = 0;
+		pkt->records[0].hdr.wcount = record_values;
+		pkt->records[0].hdr.rcount = 0;
 		break;
 	}
-
-	tx_packet->record_hdr.base_ret_addr = 0;
-	return tx_packet;
+	return pkt;
 }
 
-struct etherbone_packet* etherbone_grow(struct etherbone_packet* packet, size_t add_records) {
-	assert((packet->record_hdr.wcount == 0) || (packet->record_hdr.rcount == 0));
-	if (packet->record_hdr.rcount > 0) {
-		packet->record_hdr.rcount += add_records;
-	}
-	if (packet->record_hdr.wcount > 0) {
-		packet->record_hdr.wcount += add_records;
-	}
-	return realloc(packet, etherbone_size(packet));
+struct etherbone_packet* etherbone_grow(struct etherbone_packet* pkt) {
+	assert((pkt->records[0].hdr.wcount == 0) || (pkt->records[0].hdr.rcount == 0));
+	return realloc(pkt, etherbone_size(pkt));
 }
 
+struct etherbone_packet* etherbone_add_record_values(struct etherbone_packet* pkt, size_t num_values) {
+	if (pkt->records[0].hdr.rcount > 0) {
+		pkt->records[0].hdr.rcount += num_values;
+	} else if (pkt->records[0].hdr.wcount > 0) {
+		pkt->records[0].hdr.wcount += num_values;
+	} else {
+		assert(false);
+	}
+	return etherbone_grow(pkt);
+}
 
+bool etherbone_check(struct etherbone_packet* pkt) {
+	// Convert from network
+	etherbone_betoh(pkt);
 
+	assert(pkt->hdr.magic == ETHERBONE_MAGIC);	/* magic */
+	assert(pkt->hdr.version == ETHERBONE_VERSION);	/* version */
+	assert(pkt->hdr.addr_size == ETHERBONE_32BITS);	/* 32 bits address */
+	assert(pkt->hdr.port_size == ETHERBONE_32BITS);	/* 32 bits data */
 
-
-void etherbone_decode(/*struct tcp_socket *s,*/ unsigned char *rxbuf);
-void etherbone_decode(/*struct tcp_socket *s,*/ unsigned char *rxbuf)
-{
-	struct etherbone_packet* rx_packet;
-/*	unsigned int i;
-	unsigned int addr;
-	unsigned int data; */
-	unsigned int rcount, wcount;
-
-	assert(rx_packet->magic != ETHERBONE_MAGIC);		/* magic */
-	assert(rx_packet->version != ETHERBONE_VERSION);	/* version */
-	assert(rx_packet->addr_size != ETHERBONE_32BITS);	/* 32 bits address */
-	assert(rx_packet->port_size != ETHERBONE_32BITS);	/* 32 bits data */
-
-	rcount = rx_packet->record_hdr.rcount;
-	wcount = rx_packet->record_hdr.wcount;
+	size_t rcount = pkt->records[0].hdr.rcount;
+	size_t wcount = pkt->records[0].hdr.wcount;
 
 	assert(rcount == 0);
 
 	// Write from client to us, IE a response to our read request.
 	assert(wcount > 0);
-	assert(rx_packet->no_reads);
+	assert(pkt->hdr.no_reads);
 
-	memcpy(rxbuf, rx_packet->records, wcount*4);
-
-	return;
+	return true;
 }
-
-
-int etherbone_write(uint32_t start_addr, size_t size, uint8_t data[]);
-int etherbone_write(uint32_t start_addr, size_t size, uint8_t data[]) {
-	/* If start address isn't byte aligned, need to send an initial write
-	 * with just the data.
-	 */
-	assert(start_addr % 4 == 0);
-
-	/* Create the packet */
-	struct etherbone_packet* packet = etherbone_init(ETHERBONE_WRITE, size / 4);
-	/* Populate the write address, then the data to write */
-	packet->record_hdr.base_write_addr = start_addr;
-	memcpy((void*)(&(packet->records[0])), data, size);
-	/* Send the packet and await the response */
-	// FIXME:
-
-	/* If size isn't byte aligned, need to send a final write with just the
-	 * remaining data.
-	 */
-	assert(size % 4 == 0);
-}
-
-int etherbone_read(uint32_t start_addr, size_t size, uint8_t data[]);
-int etherbone_read(uint32_t start_addr, size_t size, uint8_t data[]) {
-
-	assert(size % 4 == 0);
-
-	struct etherbone_packet* packet = etherbone_init(ETHERBONE_READ, size / 4);
-	//pa
-
-
-}
-

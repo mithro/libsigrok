@@ -26,9 +26,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <libsigrok/libsigrok.h>
-#include "libsigrok-internal.h"
-
 #include "csr.h"
 
 #define LOG_PREFIX "litescope/csr"
@@ -262,4 +259,138 @@ err:
 	fclose(stream);
 	g_string_free(data, TRUE);
 	return SR_ERR;
+}
+
+int csr_data_width(GHashTable* csr_table) {
+	assert(csr_table != NULL);
+	// Check the data width, as we only support data_width of 8 at the moment.
+	struct csr_entry* csr_data_width = g_hash_table_lookup(csr_table, "csr_data_width");
+	assert(csr_data_width);
+	int data_width = csr_data_width->constant.value_int;
+	assert(data_width == 8);
+	return data_width;
+}
+
+static int _eb_csr_read(
+		struct sr_scpi_dev_inst *conn,
+		struct csr_entry* csr, int csr_data_width,
+		uint8_t* output_ptr) {
+	assert(conn != NULL);
+	assert(csr != NULL);
+	assert(csr->type == CSR_REGISTER);
+	assert(csr_data_width > 0);
+	assert(output_ptr != NULL);
+
+	uint32_t csr_data_mask = ~(-1 << csr_data_width);
+	assert(csr_data_mask == 0xff);
+
+	struct etherbone_packet* req = etherbone_new(ETHERBONE_READ, csr->location.width);
+	//req->record_hdr.base_ret_addr = 0;
+
+	uint32_t addr = csr->location.addr;
+	for(unsigned i = 0; i < csr->location.width; i++) {
+		sr_spew("Reading address: %x\n", addr);
+		req->records[0].values[i].read_addr = addr;
+		addr += sizeof(uint32_t);
+	}
+
+	// Send the request
+	size_t req_size = etherbone_size(req);
+	sr_spew("Packet size: %d\n", etherbone_size(req));
+	size_t r = sr_scpi_write_data(conn, (char*)etherbone_htobe(req), req_size);
+	assert(r == req_size);
+
+	// Read the response
+	// - packet header + record[0] header
+	struct etherbone_packet* res = etherbone_new(ETHERBONE_WRITE, 0);
+	size_t res_hdr_size = etherbone_size(res);
+	r = sr_scpi_read_data(conn, (char*)res, res_hdr_size);
+	sr_spew("Response size: %d\n", r);
+	assert(r == res_hdr_size);
+
+	// - record[0].values
+	assert(res->records[0].hdr.wcount == req->records[0].hdr.rcount);
+	res = etherbone_grow(res);
+	size_t res_full_size = etherbone_size(res);
+	r = sr_scpi_read_data(conn, (char*)(&(res->records[0].values[0])), res_full_size-res_hdr_size);
+
+	sr_spew("Response size: %d\n", r);
+	assert(r == (res_full_size-res_hdr_size));
+	assert(etherbone_check(res));
+
+	// Copy the data out of the response packet
+	for(unsigned i = 0; i < csr->location.width; i++) {
+#if __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+		size_t dst = csr->location.width-i-1;
+		size_t src = i;
+#else
+		size_t dst = i;
+		size_t src = i;
+#endif
+		assert(dst >= 0);
+		assert(src >= 0);
+		assert(dst < csr->location.width);
+		assert(src < csr->location.width);
+
+		*(output_ptr + dst) = (uint8_t)(res->records[0].values[src].write_value & csr_data_mask);
+	}
+	return SR_OK;
+}
+
+int eb_csr_read_any(
+		struct sr_scpi_dev_inst *conn,
+		GHashTable* csr_table,
+		const char* csr_name,
+		uint8_t* output_ptr) {
+	assert(conn != NULL);
+	assert(csr_table != NULL);
+	assert(csr_name != NULL);
+	assert(strlen(csr_name) > 0);
+	assert(output_ptr != NULL);
+	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
+	if (csr == NULL) {
+		return SR_ERR;
+	}
+	return _eb_csr_read(conn, csr, csr_data_width(csr_table), output_ptr);
+}
+
+int eb_csr_read_uint32(
+		struct sr_scpi_dev_inst *conn,
+		GHashTable* csr_table,
+		const char* csr_name,
+		uint32_t* output_ptr) {
+	assert(conn != NULL);
+	assert(csr_table != NULL);
+	assert(csr_name != NULL);
+	assert(strlen(csr_name) > 0);
+	assert(output_ptr != NULL);
+	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
+	if (csr == NULL) {
+		return SR_ERR;
+	}
+
+	int data_width = csr_data_width(csr_table);
+	assert(csr->location.width == CSR_WIDTH_TYPE(uint32_t, data_width));
+	return _eb_csr_read(conn, csr, data_width, (uint8_t*)output_ptr);
+}
+
+int eb_csr_read_uint64(
+		struct sr_scpi_dev_inst *conn,
+		GHashTable* csr_table,
+		const char* csr_name,
+		uint64_t* output_ptr) {
+	assert(conn != NULL);
+	assert(csr_table != NULL);
+	assert(csr_name != NULL);
+	assert(strlen(csr_name) > 0);
+	assert(output_ptr != NULL);
+	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
+	if (csr == NULL) {
+		return SR_ERR;
+	}
+
+	int data_width = csr_data_width(csr_table);
+	sr_spew("csr width: %d == %d\n", csr->location.width, CSR_WIDTH_TYPE(uint64_t, data_width));
+	assert(csr->location.width == CSR_WIDTH_TYPE(uint64_t, data_width));
+	return _eb_csr_read(conn, csr, data_width, (uint8_t*)output_ptr);
 }

@@ -17,8 +17,16 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <config.h>
+
 #include <stdint.h>
 #include <glib.h>
+
+#include <libsigrok/libsigrok.h>
+#include "libsigrok-internal.h"
+#include "scpi.h"
+
+#include "easy-eb.h"
 
 #define CSR_ERROR (uint32_t)(-1)
 
@@ -62,6 +70,26 @@ char* csr_entry_str(const struct csr_entry* csr);
 		g_free(msg); \
 	} while(false)
 
+#define CSR_WIDTH_TYPE(type, width) \
+	((uint32_t)(sizeof(type)*8/width))
+
 struct csr_entry* _parse_csr_line(char* line);
 
 int csr_parse_file(const char* filename, GHashTable** csr_table_ptr);
+int csr_data_width(GHashTable* csr_table);
+
+int eb_csr_read_any(
+	struct sr_scpi_dev_inst *conn,
+	GHashTable* csr_table,
+	const char* csr_name,
+	uint8_t* output_ptr);
+int eb_csr_read_uint32(
+	struct sr_scpi_dev_inst *conn,
+	GHashTable* csr_table,
+	const char* csr_name,
+	uint32_t* output_ptr);
+int eb_csr_read_uint64(
+	struct sr_scpi_dev_inst *conn,
+	GHashTable* csr_table,
+	const char* csr_name,
+	uint64_t* output_ptr);

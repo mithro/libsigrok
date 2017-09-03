@@ -17,10 +17,12 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <assert.h>
 #include <config.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
+#include <inttypes.h>
 
 #include <linux/limits.h>
 
@@ -98,8 +100,7 @@ static const int32_t trigger_matches[] = {
 // 
 //
 
-static void csr_read_config(const char* config_dir);
-static void csr_read_config(const char* config_dir) {
+static GHashTable* csr_read_config(const char* config_dir) {
 	// construct the csr config file path
 	char csr_file[PATH_MAX];
 	strncpy(csr_file, config_dir, PATH_MAX);
@@ -111,18 +112,15 @@ static void csr_read_config(const char* config_dir) {
 	GHashTable *csr_table;
 	if(csr_parse_file(csr_file, &csr_table) != SR_OK)
 		goto err;
-
-	sr_dbg("litescope::csr_read_config %s\n", csr_file);
-
-	struct csr_entry* ip1 = g_hash_table_lookup(csr_table, "localip1");
-	struct csr_entry* ip2 = g_hash_table_lookup(csr_table, "localip2");
-	struct csr_entry* ip3 = g_hash_table_lookup(csr_table, "localip3");
-	struct csr_entry* ip4 = g_hash_table_lookup(csr_table, "localip4");
-	sr_info("Device IP: %d.%d.%d.%d\n", ip1->constant.value_int, ip2->constant.value_int, ip3->constant.value_int, ip4->constant.value_int);
-
+	assert(csr_table != NULL);
+	sr_info("litescope::csr_read_config %s with %d entries\n", csr_file, g_hash_table_size(csr_table));
+	return csr_table;
 err:
 	g_hash_table_destroy(csr_table);
+	return NULL;
 }
+
+static GHashTable* global_csr_table = NULL;
 
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 {
@@ -131,6 +129,13 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	//struct sr_scpi_hw_info *hw_info;
 
 	sr_dbg("litescope::probe_device %p\n", scpi);
+
+	// info_dna_id
+	uint64_t dna_id = (uint64_t)-1;
+	assert(global_csr_table != NULL);
+	assert(eb_csr_read_uint64(scpi, global_csr_table, "info_dna_id", &dna_id) == SR_OK);
+	assert(dna_id != (uint64_t)-1);
+	sr_info("Device DNA: 0x%" PRIx64 "\n", dna_id);
 
 	sdi = NULL;
 	devc = NULL;
@@ -163,7 +168,21 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 	}
 
 	// Read in the CSR config file
-	csr_read_config(config_dir);
+	GHashTable* csr_table = csr_read_config(config_dir);
+	assert(csr_table != NULL);
+	global_csr_table = csr_table;
+	struct csr_entry* ip1 = g_hash_table_lookup(csr_table, "localip1");
+	struct csr_entry* ip2 = g_hash_table_lookup(csr_table, "localip2");
+	struct csr_entry* ip3 = g_hash_table_lookup(csr_table, "localip3");
+	struct csr_entry* ip4 = g_hash_table_lookup(csr_table, "localip4");
+	sr_info("Device IP: %d.%d.%d.%d\n", 
+		ip1->constant.value_int,
+		ip2->constant.value_int,
+		ip3->constant.value_int,
+		ip4->constant.value_int);
+
+	// Only support data_width of 8 at the moment.
+	assert(csr_data_width(csr_table) == 8);
 
 	// Read in the analyzer config file
 

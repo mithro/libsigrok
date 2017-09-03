@@ -363,17 +363,14 @@ SR_API int sr_input_scan_buffer(GString *buf, const struct sr_input **in)
 	ret = SR_ERR;
 	for (i = 0; input_module_list[i]; i++) {
 		imod = input_module_list[i];
-		sr_spew("Trying!!! %s", imod->id);
 		if (!imod->metadata[0]) {
 			/* Module has no metadata for matching so will take
 			 * any input. No point in letting it try to match. */
-			sr_spew("Skipping %s as it accepts anything", imod->id);
 			continue;
 		}
-		if (!check_required_metadata(imod->metadata, avail_metadata)) {
+		if (!check_required_metadata(imod->metadata, avail_metadata))
 			/* Cannot satisfy this module's requirements. */
 			continue;
-		}
 
 		meta = g_hash_table_new(NULL, NULL);
 		for (m = 0; m < sizeof(imod->metadata); m++) {
@@ -383,7 +380,6 @@ SR_API int sr_input_scan_buffer(GString *buf, const struct sr_input **in)
 		}
 		if (g_hash_table_size(meta) == 0) {
 			/* No metadata for this module, so nothing to match. */
-			sr_spew("Skipping as no metadata for %s", imod->id);
 			g_hash_table_destroy(meta);
 			continue;
 		}
@@ -391,15 +387,12 @@ SR_API int sr_input_scan_buffer(GString *buf, const struct sr_input **in)
 		ret = imod->format_match(meta);
 		g_hash_table_destroy(meta);
 		if (ret == SR_ERR_DATA) {
-			sr_spew("Module %s SR_ERR_DATA", imod->id);
 			/* Module recognized this buffer, but cannot handle it. */
 			break;
 		} else if (ret == SR_ERR) {
-			sr_spew("Module %s SR_ERR", imod->id);
 			/* Module didn't recognize this buffer. */
 			continue;
 		} else if (ret != SR_OK) {
-			sr_spew("Module %s != SR_OK", imod->id);
 			/* Can be SR_ERR_NA. */
 			return ret;
 		}
@@ -421,16 +414,19 @@ SR_API int sr_input_scan_buffer(GString *buf, const struct sr_input **in)
  * Otherwise, *in contains NULL.
  *
  */
-
-SR_API int sr_input_open_file(const char *filename, FILE **streamptr, uint8_t *avail_metadata, GHashTable **metaptr) {
+SR_API int sr_input_scan_file(const char *filename, const struct sr_input **in)
+{
 	int64_t filesize;
 	FILE *stream;
+	const struct sr_input_module *imod;
 	GHashTable *meta;
 	GString *header;
 	size_t count;
-	unsigned int midx;
+	unsigned int midx, i;
+	int ret;
+	uint8_t avail_metadata[8];
 
-	*metaptr = NULL;
+	*in = NULL;
 
 	if (!filename || !filename[0]) {
 		sr_err("Invalid filename.");
@@ -458,6 +454,7 @@ SR_API int sr_input_open_file(const char *filename, FILE **streamptr, uint8_t *a
 		g_string_free(header, TRUE);
 		return SR_ERR;
 	}
+	fclose(stream);
 	g_string_set_size(header, count);
 
 	meta = g_hash_table_new(NULL, NULL);
@@ -472,41 +469,20 @@ SR_API int sr_input_open_file(const char *filename, FILE **streamptr, uint8_t *a
 	avail_metadata[midx++] = SR_INPUT_META_FILESIZE;
 	avail_metadata[midx++] = SR_INPUT_META_HEADER;
 	avail_metadata[midx] = 0;
-
-	*metaptr = meta;
-	*streamptr = stream;
-	return SR_OK;
-}
-
-SR_API int sr_input_scan_file(const char *filename, const struct sr_input **in)
-{
-	const struct sr_input_module *imod;
-	GHashTable *meta;
-	FILE *stream;
-	unsigned int i;
-	int ret;
-	uint8_t avail_metadata[8];
-
-	*in = NULL;
-
-	if (sr_input_open_file(filename, &stream, avail_metadata, &meta) == SR_ERR)
-		return SR_ERR;
+	/* TODO: MIME type */
 
 	ret = SR_ERR;
+
 	for (i = 0; input_module_list[i]; i++) {
 		imod = input_module_list[i];
-		sr_spew("Trying!!! %s", imod->id);
 		if (!imod->metadata[0]) {
 			/* Module has no metadata for matching so will take
 			 * any input. No point in letting it try to match. */
-			sr_spew("Skipping %s as it accepts anything", imod->id);
 			continue;
 		}
-		if (!check_required_metadata(imod->metadata, avail_metadata)) {
+		if (!check_required_metadata(imod->metadata, avail_metadata))
 			/* Cannot satisfy this module's requirements. */
-			sr_dbg("check_required_metadata failed %s.", imod->id);
 			continue;
-		}
 
 		sr_dbg("Trying module %s.", imod->id);
 
@@ -516,19 +492,16 @@ SR_API int sr_input_scan_file(const char *filename, const struct sr_input **in)
 			continue;
 		} else if (ret != SR_OK) {
 			/* Module recognized this buffer, but cannot handle it. */
-			sr_warn("Module %s matched but couldn't handle buffer.", imod->id);
-			continue;
+			break;
 		}
 		/* Found a matching module. */
 		sr_dbg("Module %s matched.", imod->id);
 
 		*in = sr_input_new(imod, NULL);
-		ret = SR_OK;
 		break;
 	}
 	g_hash_table_destroy(meta);
-	fclose(stream);
-	// FIXME: g_string_free(header, TRUE);
+	g_string_free(header, TRUE);
 
 	return ret;
 }

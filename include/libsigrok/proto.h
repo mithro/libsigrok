@@ -169,7 +169,6 @@ SR_API void sr_input_options_free(const struct sr_option **options);
 SR_API struct sr_input *sr_input_new(const struct sr_input_module *imod,
 		GHashTable *options);
 SR_API int sr_input_scan_buffer(GString *buf, const struct sr_input **in);
-SR_API int sr_input_open_file(const char *filename, FILE **streamptr, uint8_t *avail_metadata, GHashTable **metaptr);
 SR_API int sr_input_scan_file(const char *filename, const struct sr_input **in);
 SR_API struct sr_dev_inst *sr_input_dev_inst_get(const struct sr_input *in);
 SR_API int sr_input_send(const struct sr_input *in, GString *buf);

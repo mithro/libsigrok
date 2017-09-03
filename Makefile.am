@@ -392,6 +392,10 @@ src_libdrivers_la_SOURCES += \
 	src/hardware/litescope/protocol.h \
 	src/hardware/litescope/protocol.c \
 	src/hardware/litescope/api.c \
+	src/hardware/litescope/csr.h \
+	src/hardware/litescope/csr.c \
+	src/hardware/litescope/analyzer.h \
+	src/hardware/litescope/analyzer.c \
 	src/hardware/litescope/easy-eb.h \
 	src/hardware/litescope/easy-eb.c
 endif

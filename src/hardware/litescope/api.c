@@ -26,6 +26,7 @@
 
 #include "scpi.h"
 #include "protocol.h"
+#include "csr.h"
 
 #define LOG_PREFIX "litescope"
 
@@ -94,69 +95,33 @@ static const int32_t trigger_matches[] = {
 	SR_TRIGGER_FALLING,
 };
 
-static struct csr_config* read_csr_config(const char* config_dir);
-static struct csr_config* read_csr_config(const char* config_dir) {
+// 
+//
+
+static void csr_read_config(const char* config_dir);
+static void csr_read_config(const char* config_dir) {
 	// construct the csr config file path
 	char csr_file[PATH_MAX];
 	strncpy(csr_file, config_dir, PATH_MAX);
 	strcpy(csr_file+strlen(csr_file), CSR_FILE);
 
-	sr_dbg("litescope::read_csr_config %s\n", csr_file);
+	sr_dbg("litescope::csr_read_config %s\n", csr_file);
 
-	// Get us a csv parser from sigork's input subsystem
-	const struct sr_input_module *csv_parser_module = sr_input_find("csv");
-	if (csv_parser_module == NULL) {
-		sr_err("Failed to find csv parser!?\n");
+	// Parse the csr csv file into a table
+	GHashTable *csr_table;
+	if(csr_parse_file(csr_file, &csr_table) != SR_OK)
 		goto err;
-	}
-	struct sr_input *csv_parser = sr_input_new(csv_parser_module, NULL);
-	if (csv_parser == NULL) {
-		sr_err("Failed to find csv parser!?\n");
-		goto err;
-	}
 
-	// Open the csv file
-	FILE *stream;
-	GHashTable *meta;
-	uint8_t avail_metadata[8];
-	if (sr_input_open_file(csr_file, &stream, avail_metadata, &meta) == SR_ERR) {
-		sr_err("Failed to open CSR config csv: %s\n", csr_file);
-		goto err;
-	}
+	sr_dbg("litescope::csr_read_config %s\n", csr_file);
 
-	GString *header = g_hash_table_lookup(meta, GINT_TO_POINTER(SR_INPUT_META_HEADER));
-	if (sr_input_send(csv_parser, header) != SR_OK) {
-		sr_dbg("Failed at parsing header.");
-		goto err;
-	}
-
-	GString *buf;
-	buf = g_string_sized_new(BUFSIZE);
-	while (TRUE) {	
-		g_string_truncate(buf, 0);
-		size_t len = fread(buf->str, 1, BUFSIZE-1, stream);
-		if (len != BUFSIZE-1 && ferror(stream)) {
-			sr_err("Failed to read %s: %s", csr_file, g_strerror(errno));
-			goto err;
-		}
-		if (len == 0) {
-			/* End of file or stream. */
-			sr_dbg("EOF");
-			break;
-		}
-		g_string_set_size(buf, len);
-		if (sr_input_send(csv_parser, buf) != SR_OK) {
-			sr_dbg("Failed at parsing body.");
-			break;
-		}
-	}
-	sr_input_end(csv_parser);
+	struct csr_entry* ip1 = g_hash_table_lookup(csr_table, "localip1");
+	struct csr_entry* ip2 = g_hash_table_lookup(csr_table, "localip2");
+	struct csr_entry* ip3 = g_hash_table_lookup(csr_table, "localip3");
+	struct csr_entry* ip4 = g_hash_table_lookup(csr_table, "localip4");
+	sr_info("Device IP: %d.%d.%d.%d\n", ip1->constant.value_int, ip2->constant.value_int, ip3->constant.value_int, ip4->constant.value_int);
 
 err:
-	g_string_free(header, TRUE);
-	g_hash_table_destroy(meta);
-	sr_input_free(csv_parser);
-	return NULL;
+	g_hash_table_destroy(csr_table);
 }
 
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
@@ -198,7 +163,7 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 	}
 
 	// Read in the CSR config file
-	read_csr_config(config_dir);
+	csr_read_config(config_dir);
 
 	// Read in the analyzer config file
 

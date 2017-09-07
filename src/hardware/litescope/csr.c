@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <glib/gstdio.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "easy-eb.h"
@@ -211,7 +212,7 @@ int csr_parse_file(const char* filename, GHashTable** csr_table_ptr) {
 	assert(*csr_table_ptr == NULL);
 
 	GHashTable* csr_table = g_hash_table_new(g_str_hash, g_str_equal);
-	if (!csv_parse_file(filename, (csv_parse_line_t)(&csr_parse_line), (void*)csr_table)) {
+	if (csv_parse_file(filename, (csv_parse_line_t)(&csr_parse_line), (void*)csr_table) != SR_OK) {
 		g_hash_table_destroy(csr_table);
 		return SR_ERR;
 	} else {
@@ -220,28 +221,47 @@ int csr_parse_file(const char* filename, GHashTable** csr_table_ptr) {
 	}
 }
 
-int csr_data_width(GHashTable* csr_table) {
+int csr_get_constant(GHashTable* csr_table, const char* name) {
 	assert(csr_table != NULL);
+	assert(name != NULL);
+	struct csr_entry* csr_constant = g_hash_table_lookup(csr_table, name);
+	assert(csr_constant);
+	assert(csr_constant->type == CSR_CONSTANT_NUM);
+	return csr_constant->constant.value_int;
+}
+
+int csr_data_width(GHashTable* csr_table) {
 	// Check the data width, as we only support data_width of 8 at the moment.
-	struct csr_entry* csr_data_width = g_hash_table_lookup(csr_table, "csr_data_width");
-	assert(csr_data_width);
-	int data_width = csr_data_width->constant.value_int;
+	int data_width = csr_get_constant(csr_table, "csr_data_width");
 	assert(data_width == 8);
 	return data_width;
 }
 
-static int _eb_csr_read(
+int _eb_csr_read(
 		struct sr_scpi_dev_inst *conn,
-		struct csr_entry* csr, int csr_data_width,
-		uint8_t* output_ptr) {
+		GHashTable* csr_table,
+		const char* csr_name,
+		uint8_t* output_ptr,
+		size_t output_ptr_width) {
 	assert(conn != NULL);
+
+	assert(csr_table != NULL);
+	assert(csr_name != NULL);
+	assert(strlen(csr_name) > 0);
+	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
 	assert(csr != NULL);
 	assert(csr->type == CSR_REGISTER);
-	assert(csr_data_width > 0);
+
+	int data_width = csr_data_width(csr_table);
+	assert(data_width == 8);
+	assert(data_width > 0);
+	uint32_t csr_data_mask = ~(-1 << data_width);
+	assert(csr_data_mask == 0xff);
+
 	assert(output_ptr != NULL);
 
-	uint32_t csr_data_mask = ~(-1 << csr_data_width);
-	assert(csr_data_mask == 0xff);
+	assert(output_ptr_width > 0);
+	assert((output_ptr_width*8/data_width) == csr->location.width);
 
 	struct etherbone_packet* req = etherbone_new(ETHERBONE_READ, csr->location.width);
 	//req->record_hdr.base_ret_addr = 0;
@@ -255,9 +275,10 @@ static int _eb_csr_read(
 
 	// Send the request
 	size_t req_size = etherbone_size(req);
-	sr_spew("Packet size: %zu\n", etherbone_size(req));
+	sr_spew("Request Packet size: %zu\n", etherbone_size(req));
 	size_t r = sr_scpi_write_data(conn, (char*)etherbone_htobe(req), req_size);
 	assert(r == req_size);
+	sr_spew("Request Sent\n");
 
 	// Read the response
 	// - packet header + record[0] header
@@ -291,63 +312,72 @@ static int _eb_csr_read(
 
 		*(output_ptr + dst) = (uint8_t)(res->records[0].values[src].write_value & csr_data_mask);
 	}
+
+	free(req);
+	free(res);
 	return SR_OK;
 }
 
-int eb_csr_read_any(
+
+int _eb_csr_write(
 		struct sr_scpi_dev_inst *conn,
 		GHashTable* csr_table,
 		const char* csr_name,
-		uint8_t* output_ptr) {
+		uint8_t* input_ptr,
+		size_t input_ptr_width) {
 	assert(conn != NULL);
+
 	assert(csr_table != NULL);
 	assert(csr_name != NULL);
 	assert(strlen(csr_name) > 0);
-	assert(output_ptr != NULL);
 	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
 	if (csr == NULL) {
 		return SR_ERR;
 	}
-	return _eb_csr_read(conn, csr, csr_data_width(csr_table), output_ptr);
-}
-
-int eb_csr_read_uint32(
-		struct sr_scpi_dev_inst *conn,
-		GHashTable* csr_table,
-		const char* csr_name,
-		uint32_t* output_ptr) {
-	assert(conn != NULL);
-	assert(csr_table != NULL);
-	assert(csr_name != NULL);
-	assert(strlen(csr_name) > 0);
-	assert(output_ptr != NULL);
-	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
-	if (csr == NULL) {
+	if (csr->type != CSR_REGISTER) {
 		return SR_ERR;
 	}
 
 	int data_width = csr_data_width(csr_table);
-	assert(csr->location.width == CSR_WIDTH_TYPE(uint32_t, data_width));
-	return _eb_csr_read(conn, csr, data_width, (uint8_t*)output_ptr);
-}
+	assert(data_width == 8);
+	assert(data_width > 0);
+	uint32_t csr_data_mask = ~(-1 << data_width);
+	assert(csr_data_mask == 0xff);
 
-int eb_csr_read_uint64(
-		struct sr_scpi_dev_inst *conn,
-		GHashTable* csr_table,
-		const char* csr_name,
-		uint64_t* output_ptr) {
-	assert(conn != NULL);
-	assert(csr_table != NULL);
-	assert(csr_name != NULL);
-	assert(strlen(csr_name) > 0);
-	assert(output_ptr != NULL);
-	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
-	if (csr == NULL) {
-		return SR_ERR;
+	assert(input_ptr != NULL);
+
+	assert(input_ptr_width > 0);
+	assert((input_ptr_width*8/data_width) == csr->location.width);
+
+	size_t write_size = csr->location.width;
+	sr_spew("Write size: %zu\n", write_size);
+	struct etherbone_packet* req = etherbone_new(ETHERBONE_WRITE, write_size);
+
+	req->records[0].hdr.base_write_addr = csr->location.addr;
+	for(unsigned i = 0; i < csr->location.width; i++) {
+#if __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
+		req->records[0].values[i].write_value = input_ptr[csr->location.width-i-1];
+#else
+		req->records[0].values[i].write_value = input_ptr[i];
+#endif
+		sr_spew("Writing value: %x\n", req->records[0].values[i].write_value);
 	}
 
-	int data_width = csr_data_width(csr_table);
-	sr_spew("csr width: %d == %d\n", csr->location.width, CSR_WIDTH_TYPE(uint64_t, data_width));
-	assert(csr->location.width == CSR_WIDTH_TYPE(uint64_t, data_width));
-	return _eb_csr_read(conn, csr, data_width, (uint8_t*)output_ptr);
+	// Send the request
+	size_t req_size = etherbone_size(req);
+	sr_spew("Send Packet size: %zu\n", etherbone_size(req));
+	size_t r = sr_scpi_write_data(conn, (char*)etherbone_htobe(req), req_size);
+	assert(r == req_size);
+	sr_spew("Sent\n");
+
+	free(req);
+
+	return SR_OK;
 }
+
+
+EB_CSR_FUNCTIONS(bool)
+EB_CSR_FUNCTIONS(uint8_t)
+EB_CSR_FUNCTIONS(uint16_t)
+EB_CSR_FUNCTIONS(uint32_t)
+EB_CSR_FUNCTIONS(uint64_t)

@@ -26,7 +26,36 @@
 #include <stdbool.h>
 #include <glib.h>
 
-int analyzer_parse_file(const char* filename, GHashTable** csr_table_ptr);
-bool analyzer_parse_line(char* line, GHashTable* csr_table_ptr);
+struct analyzer_signal {
+	int group;
+	char* name;
+	int bits;
+};
+
+struct analyzer_config {
+	int data_width;
+	int data_depth;
+	int cd_ratio;
+	int num_groups;
+};
+
+struct analyzer {
+	struct analyzer_config config;
+	GHashTable* csrs;
+	GHashTable* signals;
+};
+
+int analyzer_parse_file(const char* filename, struct analyzer** an_ptr);
+bool analyzer_parse_line(char* line, struct analyzer* an);
+
+char* analyzer_signal_str(const struct analyzer_signal* signal);
+char* analyzer_config_str(const struct analyzer_config* config);
+
+#define sr_analyzer_log(LEVEL, func, value) \
+	do { \
+		char* msg = func(value); \
+		sr_ ## LEVEL ("%s\n", msg); \
+		g_free(msg); \
+	} while(false)
 
 #endif

@@ -73,27 +73,58 @@ char* csr_entry_str(const struct csr_entry* csr);
 		g_free(msg); \
 	} while(false)
 
-#define CSR_WIDTH_TYPE(type, width) \
-	((uint32_t)(sizeof(type)*8/width))
+
+int _eb_csr_read(
+	struct sr_scpi_dev_inst *conn,
+	GHashTable* csr_table,
+	const char* csr_name,
+	uint8_t* output_ptr,
+	size_t output_ptr_width);
+
+int _eb_csr_write(
+	struct sr_scpi_dev_inst *conn,
+	GHashTable* csr_table,
+	const char* csr_name,
+	uint8_t* input_ptr,
+	size_t input_ptr_width);
+
+#define _EB_CSR_READ_DEF(type) \
+	int eb_csr_read_ ## type( \
+			struct sr_scpi_dev_inst *conn, \
+			GHashTable* csr_table, \
+			const char* csr_name, \
+			type* output_ptr)
+
+#define _EB_CSR_WRITE_DEF(type) \
+	int eb_csr_write_ ## type( \
+			struct sr_scpi_dev_inst *conn, \
+			GHashTable* csr_table, \
+			const char* csr_name, \
+			type ivalue)
+
+#define EB_CSR_FUNCTIONS_DEF(type) \
+	_EB_CSR_READ_DEF(type); \
+	_EB_CSR_WRITE_DEF(type);
+
+#define EB_CSR_FUNCTIONS(type) \
+	_EB_CSR_READ_DEF(type) { \
+		return _eb_csr_read(conn, csr_table, csr_name, (uint8_t*)output_ptr, sizeof(type)); \
+	} \
+	\
+	_EB_CSR_WRITE_DEF(type) { \
+		return _eb_csr_write(conn, csr_table, csr_name, (uint8_t*)&ivalue, sizeof(type)); \
+	}
 
 int csr_parse_file(const char* filename, GHashTable** csr_table_ptr);
 bool csr_parse_line(char* line, GHashTable* csr_table);
+
+int csr_get_constant(GHashTable* csr_table, const char* name);
 int csr_data_width(GHashTable* csr_table);
 
-int eb_csr_read_any(
-	struct sr_scpi_dev_inst *conn,
-	GHashTable* csr_table,
-	const char* csr_name,
-	uint8_t* output_ptr);
-int eb_csr_read_uint32(
-	struct sr_scpi_dev_inst *conn,
-	GHashTable* csr_table,
-	const char* csr_name,
-	uint32_t* output_ptr);
-int eb_csr_read_uint64(
-	struct sr_scpi_dev_inst *conn,
-	GHashTable* csr_table,
-	const char* csr_name,
-	uint64_t* output_ptr);
+EB_CSR_FUNCTIONS_DEF(bool);
+EB_CSR_FUNCTIONS_DEF(uint8_t);
+EB_CSR_FUNCTIONS_DEF(uint16_t);
+EB_CSR_FUNCTIONS_DEF(uint32_t);
+EB_CSR_FUNCTIONS_DEF(uint64_t);
 
 #endif

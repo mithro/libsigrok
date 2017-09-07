@@ -39,7 +39,7 @@
 static struct sr_dev_driver litescope_driver_info;
 
 static const char* CSR_FILE = "csr.csv";
-static const char* ANALYZE_FILE = "analyzer.csv";
+static const char* ANALYZER_FILE = "analyzer.csv";
 
 static const uint32_t scanopts[] = {
 	SR_CONF_CONN,
@@ -102,7 +102,20 @@ static const int32_t trigger_matches[] = {
 // 
 //
 
-static GHashTable* csr_read_config(const char* config_dir) {
+static struct analyzer* analyzer_read_config(const char* config_dir) {
+	// construct the csr config file path
+	char analyzer_file[PATH_MAX];
+	strncpy(analyzer_file, config_dir, PATH_MAX);
+	strcpy(analyzer_file+strlen(analyzer_file), ANALYZER_FILE);
+
+	sr_dbg("litescope::analyzer_read_config %s\n", analyzer_file);
+
+	// Parse the analyzer.csv file
+	struct analyzer *analyzer;
+	if(analyzer_parse_file(analyzer_file, &analyzer) != SR_OK)
+		goto err;
+	assert(analyzer != NULL);
+
 	// construct the csr config file path
 	char csr_file[PATH_MAX];
 	strncpy(csr_file, config_dir, PATH_MAX);
@@ -110,19 +123,33 @@ static GHashTable* csr_read_config(const char* config_dir) {
 
 	sr_dbg("litescope::csr_read_config %s\n", csr_file);
 
-	// Parse the csr csv file into a table
-	GHashTable *csr_table;
-	if(csr_parse_file(csr_file, &csr_table) != SR_OK)
+	// Parse the csr.csv file into the analyzer table
+	if(csr_parse_file(csr_file, &analyzer->csrs) != SR_OK)
 		goto err;
-	assert(csr_table != NULL);
-	sr_info("litescope::csr_read_config %s with %d entries\n", csr_file, g_hash_table_size(csr_table));
-	return csr_table;
+	assert(analyzer->csrs != NULL);
+	sr_info("litescope::csr_read_config %s with %d entries\n", csr_file, g_hash_table_size(analyzer->csrs));
+
+	sr_info("Device IP: %d.%d.%d.%d\n",
+		csr_get_constant(analyzer->csrs, "localip1"),
+		csr_get_constant(analyzer->csrs, "localip2"),
+		csr_get_constant(analyzer->csrs, "localip3"),
+		csr_get_constant(analyzer->csrs, "localip4"));
+
+	return analyzer;
 err:
-	g_hash_table_destroy(csr_table);
+	if (analyzer != NULL) {
+		if (analyzer->csrs != NULL) {
+			g_hash_table_destroy(analyzer->csrs);
+		}
+		if (analyzer->signals != NULL) {
+			g_hash_table_destroy(analyzer->signals);
+		}
+		g_free(analyzer);
+	}
 	return NULL;
 }
 
-static GHashTable* global_csr_table = NULL;
+static struct analyzer *global_analyzer = NULL;
 
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 {
@@ -134,17 +161,46 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 
 	// info_dna_id
 	uint64_t dna_id = (uint64_t)-1;
-	assert(global_csr_table != NULL);
-	assert(eb_csr_read_uint64(scpi, global_csr_table, "info_dna_id", &dna_id) == SR_OK);
+	assert(global_analyzer != NULL);
+	if(eb_csr_read_uint64_t(scpi, global_analyzer->csrs, "info_dna_id", &dna_id) != SR_OK) {
+		return NULL;
+	}
 	assert(dna_id != (uint64_t)-1);
 	sr_info("Device DNA: 0x%" PRIx64 "\n", dna_id);
+
+	// Write 0x000f to the trigger
+	uint16_t trigger_value = 0xf;
+	if(eb_csr_write_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", trigger_value) != SR_OK) {
+		sr_err("1 - write to analyzer_frontend_trigger_value failed.");
+		return NULL;
+	}
+	trigger_value = 0;
+	if(eb_csr_read_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", &trigger_value) != SR_OK) {
+		sr_err("2 - read to analyzer_frontend_trigger_value failed.");
+		return NULL;
+	}
+	sr_spew("analyzer_frontend_trigger_value: %hx (should be 0x000f)", trigger_value);
+	assert(trigger_value == 0xf);
+
+	// Write 0xf000 to the trigger
+	trigger_value = 0xf000;
+	if(eb_csr_write_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", trigger_value) != SR_OK) {
+		sr_err("3 - write to analyzer_frontend_trigger_value failed.");
+		return NULL;
+	}
+	trigger_value = 0;
+	if(eb_csr_read_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", &trigger_value) != SR_OK) {
+		sr_err("4 - read to analyzer_frontend_trigger_value failed.");
+		return NULL;
+	}
+	sr_spew("analyzer_frontend_trigger_value: %hx (should be 0xf000)", trigger_value);
+	assert(trigger_value == 0xf000);
 
 	sdi = NULL;
 	devc = NULL;
 	//hw_info = NULL;
 
 	sdi = g_malloc0(sizeof(struct sr_dev_inst));
-
 	devc = g_malloc0(sizeof(struct dev_context));
 	sdi->priv = devc;
 	return sdi;
@@ -169,25 +225,12 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 		}
 	}
 
-	// Read in the CSR config file
-	GHashTable* csr_table = csr_read_config(config_dir);
-	assert(csr_table != NULL);
-	global_csr_table = csr_table;
-	struct csr_entry* ip1 = g_hash_table_lookup(csr_table, "localip1");
-	struct csr_entry* ip2 = g_hash_table_lookup(csr_table, "localip2");
-	struct csr_entry* ip3 = g_hash_table_lookup(csr_table, "localip3");
-	struct csr_entry* ip4 = g_hash_table_lookup(csr_table, "localip4");
-	sr_info("Device IP: %d.%d.%d.%d\n", 
-		ip1->constant.value_int,
-		ip2->constant.value_int,
-		ip3->constant.value_int,
-		ip4->constant.value_int);
-
-	// Only support data_width of 8 at the moment.
-	assert(csr_data_width(csr_table) == 8);
-
 	// Read in the analyzer config file
-
+	struct analyzer* analyzer = analyzer_read_config(config_dir);
+	assert(analyzer != NULL);
+	assert(analyzer->signals != NULL);
+	assert(analyzer->csrs != NULL);
+	global_analyzer = analyzer;
 
 	return sr_scpi_scan(di->context, options, probe_device);
 //	

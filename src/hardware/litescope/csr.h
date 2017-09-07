@@ -17,8 +17,8 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef LIBSIGROK_HARDWARE_LITESCOPE_LITEX_CSR_H
-#define LIBSIGROK_HARDWARE_LITESCOPE_LITEX_CSR_H
+#ifndef LIBSIGROK_HARDWARE_LITESCOPE_CSR_H
+#define LIBSIGROK_HARDWARE_LITESCOPE_CSR_H
 
 #include <config.h>
 
@@ -76,14 +76,14 @@ char* csr_entry_str(const struct csr_entry* csr);
 
 int _eb_csr_read(
 	struct sr_scpi_dev_inst *conn,
-	GHashTable* csr_table,
+	const GHashTable* csr_table,
 	const char* csr_name,
 	uint8_t* output_ptr,
 	size_t output_ptr_width);
 
 int _eb_csr_write(
 	struct sr_scpi_dev_inst *conn,
-	GHashTable* csr_table,
+	const GHashTable* csr_table,
 	const char* csr_name,
 	uint8_t* input_ptr,
 	size_t input_ptr_width);
@@ -91,14 +91,14 @@ int _eb_csr_write(
 #define _EB_CSR_READ_DEF(type) \
 	int eb_csr_read_ ## type( \
 			struct sr_scpi_dev_inst *conn, \
-			GHashTable* csr_table, \
+			const GHashTable* csr_table, \
 			const char* csr_name, \
 			type* output_ptr)
 
 #define _EB_CSR_WRITE_DEF(type) \
 	int eb_csr_write_ ## type( \
 			struct sr_scpi_dev_inst *conn, \
-			GHashTable* csr_table, \
+			const GHashTable* csr_table, \
 			const char* csr_name, \
 			type ivalue)
 
@@ -118,8 +118,8 @@ int _eb_csr_write(
 int csr_parse_file(const char* filename, GHashTable** csr_table_ptr);
 bool csr_parse_line(char* line, GHashTable* csr_table);
 
-int csr_get_constant(GHashTable* csr_table, const char* name);
-int csr_data_width(GHashTable* csr_table);
+int csr_get_constant(const GHashTable* csr_table, const char* name);
+int csr_data_width(const GHashTable* csr_table);
 
 EB_CSR_FUNCTIONS_DEF(bool);
 EB_CSR_FUNCTIONS_DEF(uint8_t);

@@ -221,16 +221,16 @@ int csr_parse_file(const char* filename, GHashTable** csr_table_ptr) {
 	}
 }
 
-int csr_get_constant(GHashTable* csr_table, const char* name) {
+int csr_get_constant(const GHashTable* csr_table, const char* name) {
 	assert(csr_table != NULL);
 	assert(name != NULL);
-	struct csr_entry* csr_constant = g_hash_table_lookup(csr_table, name);
+	struct csr_entry* csr_constant = g_hash_table_lookup((GHashTable*)csr_table, name);
 	assert(csr_constant);
 	assert(csr_constant->type == CSR_CONSTANT_NUM);
 	return csr_constant->constant.value_int;
 }
 
-int csr_data_width(GHashTable* csr_table) {
+int csr_data_width(const GHashTable* csr_table) {
 	// Check the data width, as we only support data_width of 8 at the moment.
 	int data_width = csr_get_constant(csr_table, "csr_data_width");
 	assert(data_width == 8);
@@ -239,7 +239,7 @@ int csr_data_width(GHashTable* csr_table) {
 
 int _eb_csr_read(
 		struct sr_scpi_dev_inst *conn,
-		GHashTable* csr_table,
+		const GHashTable* csr_table,
 		const char* csr_name,
 		uint8_t* output_ptr,
 		size_t output_ptr_width) {
@@ -248,7 +248,7 @@ int _eb_csr_read(
 	assert(csr_table != NULL);
 	assert(csr_name != NULL);
 	assert(strlen(csr_name) > 0);
-	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
+	struct csr_entry* csr = g_hash_table_lookup((GHashTable*)csr_table, csr_name);
 	assert(csr != NULL);
 	assert(csr->type == CSR_REGISTER);
 
@@ -321,7 +321,7 @@ int _eb_csr_read(
 
 int _eb_csr_write(
 		struct sr_scpi_dev_inst *conn,
-		GHashTable* csr_table,
+		const GHashTable* csr_table,
 		const char* csr_name,
 		uint8_t* input_ptr,
 		size_t input_ptr_width) {
@@ -330,7 +330,7 @@ int _eb_csr_write(
 	assert(csr_table != NULL);
 	assert(csr_name != NULL);
 	assert(strlen(csr_name) > 0);
-	struct csr_entry* csr = g_hash_table_lookup(csr_table, csr_name);
+	struct csr_entry* csr = g_hash_table_lookup((GHashTable*)csr_table, csr_name);
 	if (csr == NULL) {
 		return SR_ERR;
 	}

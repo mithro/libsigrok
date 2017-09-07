@@ -27,35 +27,46 @@
 #include <glib.h>
 
 struct analyzer_signal {
-	int group;
 	char* name;
-	int bits;
+	uint32_t bits;
+	uint32_t mask;
+	uint32_t shift;
 };
 
 struct analyzer_config {
 	int data_width;
 	int data_depth;
 	int cd_ratio;
-	int num_groups;
 };
 
 struct analyzer {
 	struct analyzer_config config;
 	GHashTable* csrs;
-	GHashTable* signals;
+	size_t signal_groups;
+	GHashTable* signals[];
 };
 
+struct analyzer* analyzer_append_signals(struct analyzer* an);
+GHashTable* analyzer_signals(struct analyzer* an, size_t group_num);
+size_t* _analyzer_signals_shift(struct analyzer* an, size_t group_num);
+void analyzer_free(struct analyzer** an);
+
 int analyzer_parse_file(const char* filename, struct analyzer** an_ptr);
-bool analyzer_parse_line(char* line, struct analyzer* an);
+bool analyzer_parse_line(char* line, struct analyzer** an_ptr);
 
-char* analyzer_signal_str(const struct analyzer_signal* signal);
-char* analyzer_config_str(const struct analyzer_config* config);
+char* analyzer_signal_str(const struct analyzer_signal* signal, size_t group);
+char* analyzer_config_str(const struct analyzer_config* config, size_t signal_groups);
 
-#define sr_analyzer_log(LEVEL, func, value) \
+#define sr_analyzer_log(LEVEL, func, value, group) \
 	do { \
-		char* msg = func(value); \
+		char* msg = func(value, group); \
 		sr_ ## LEVEL ("%s\n", msg); \
 		g_free(msg); \
 	} while(false)
+
+int analyzer_run(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
+bool analyzer_check(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
+int analyzer_download(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
+
 
 #endif

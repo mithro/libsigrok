@@ -95,8 +95,6 @@ static const uint32_t devopts[] = {
 static const int32_t trigger_matches[] = {
 	SR_TRIGGER_ZERO,
 	SR_TRIGGER_ONE,
-	SR_TRIGGER_RISING,
-	SR_TRIGGER_FALLING,
 };
 
 // 
@@ -138,16 +136,23 @@ static struct analyzer* analyzer_read_config(const char* config_dir) {
 	return analyzer;
 err:
 	if (analyzer != NULL) {
-		if (analyzer->csrs != NULL) {
-			g_hash_table_destroy(analyzer->csrs);
-		}
-		if (analyzer->signals != NULL) {
-			g_hash_table_destroy(analyzer->signals);
-		}
-		g_free(analyzer);
+		analyzer_free(&analyzer);
 	}
 	return NULL;
 }
+
+
+//	{SR_CONF_CAPTURE_RATIO, SR_T_UINT64, "captureratio",
+//		"Pre-trigger capture ratio", NULL},
+
+//	{SR_CONF_BUFFERSIZE, SR_T_UINT64, "buffersize",
+//		"Buffer size", NULL},
+
+//	{SR_CONF_ENABLED, SR_T_BOOL, "enabled",
+//		"Channel enabled", NULL},
+
+//	{SR_CONF_LIMIT_SAMPLES, SR_T_UINT64, "limit_samples",
+//		"Sample limit", NULL},
 
 static struct analyzer *global_analyzer = NULL;
 
@@ -166,7 +171,9 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 		return NULL;
 	}
 	assert(dna_id != (uint64_t)-1);
-	sr_info("Device DNA: 0x%" PRIx64 "\n", dna_id);
+	char dna_str[64] = {0};
+	snprintf(dna_str, 63, "0x%" PRIx64, dna_id);
+	sr_info("Device DNA: 0x%s\n", dna_str);
 
 	// Write 0x000f to the trigger
 	uint16_t trigger_value = 0xf;
@@ -201,11 +208,47 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	//hw_info = NULL;
 
 	sdi = g_malloc0(sizeof(struct sr_dev_inst));
+	assert(sdi != NULL);
+	sdi->status = SR_ST_INACTIVE;
+	sdi->vendor = g_strdup("LiteScope");
+	sdi->model = g_strdup("Virtual Logic Analyzer");
+	sdi->version = g_strdup("v1.0");
+	sdi->serial_num = g_strdup(dna_str);
+	sdi->driver = &litescope_driver_info;
+	sdi->inst_type = SR_INST_SCPI;
+	sdi->conn = scpi;
+
+	int j = 0;
+	for (size_t i = 0; i < global_analyzer->signal_groups; i++) {
+		GHashTableIter iter;
+		const char *key = NULL;
+		struct analyzer_signal *value = NULL;
+		
+		struct sr_channel_group *cg = g_malloc0(sizeof(struct sr_channel_group));
+		assert(cg != NULL);
+		assert(global_analyzer != NULL);
+		assert(global_analyzer->signals[i] != NULL);
+
+		g_hash_table_iter_init (&iter, global_analyzer->signals[i]);
+		while (g_hash_table_iter_next(&iter, (void*)&key, (void*)&value)) {
+			assert(key != NULL);
+			assert(value != NULL);
+			if (strcmp(key, "_shift") == 0)
+				continue;
+
+			assert(value->name != NULL);
+			struct sr_channel* ch = sr_channel_new(
+				sdi, j, SR_CHANNEL_LOGIC, TRUE, g_strdup(value->name));
+
+			cg->channels = g_slist_append(cg->channels, ch);
+			j++;
+		}
+		sdi->channel_groups = g_slist_append(sdi->channel_groups, cg);
+	}
+
 	devc = g_malloc0(sizeof(struct dev_context));
 	sdi->priv = devc;
 	return sdi;
-
-//	return NULL;
 }
 
 static GSList *scan(struct sr_dev_driver *di, GSList *options)
@@ -310,6 +353,16 @@ static int config_set(uint32_t key, GVariant *data,
 	return ret;
 }
 
+static int config_channel_set(const struct sr_dev_inst *sdi,
+	struct sr_channel *ch, unsigned int changes)
+{
+	/* Currently we only handle SR_CHANNEL_SET_ENABLED. */
+	if (changes != SR_CHANNEL_SET_ENABLED)
+		return SR_ERR_NA;
+
+	return SR_OK;
+}
+
 static int config_list(uint32_t key, GVariant **data,
 	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
 {
@@ -331,6 +384,7 @@ static int config_list(uint32_t key, GVariant **data,
 
 	/* TODO */
 	default:
+		sr_dbg("litescope::config_list ??? %x\n", key);
 		return SR_ERR_NA;
 	}
 
@@ -367,6 +421,7 @@ static struct sr_dev_driver litescope_driver_info = {
 	.dev_clear = std_dev_clear,
 	.config_get = config_get,
 	.config_set = config_set,
+	.config_channel_set = config_channel_set,
 	.config_list = config_list,
 	.dev_open = dev_open,
 	.dev_close = dev_close,

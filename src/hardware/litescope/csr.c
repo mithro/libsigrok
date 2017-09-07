@@ -5,7 +5,7 @@
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
+ * the Free Software Foundation, either version 2 of the License, or
  * (at your option) any later version.
  *
  * This program is distributed in the hope that it will be useful,
@@ -22,9 +22,11 @@
 #include <assert.h>
 #include <errno.h>
 #include <glib/gstdio.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
+
+#include "easy-eb.h"
+#include "simple-csv.h"
 
 #include "csr.h"
 
@@ -117,7 +119,7 @@ char* csr_entry_str(const struct csr_entry* csr) {
 	return g_strndup(buf, BUF_SIZE);
 }
 
-struct csr_entry* _parse_csr_line(char* line) {
+bool csr_parse_line(char* line, GHashTable* csr_table) {
 	char type[BUF_SIZE] = "\0";
 	char name[BUF_SIZE] = "\0";
 	char addr[BUF_SIZE] = "\0";
@@ -145,7 +147,7 @@ struct csr_entry* _parse_csr_line(char* line) {
 	} else {
 		sr_err("Invalid value '%s' in column 0 in line %zu.",
 			type, (size_t)0);
-		return NULL;
+		return false;
 	}
 
 	csr->name = g_strdup(name);
@@ -200,7 +202,8 @@ struct csr_entry* _parse_csr_line(char* line) {
 	}
 
 	sr_csr_log(spew, csr);
-	return csr;
+	g_hash_table_insert(csr_table, csr->name, csr);
+	return true;
 }
 
 int csr_parse_file(const char* filename, GHashTable** csr_table_ptr) {
@@ -208,57 +211,13 @@ int csr_parse_file(const char* filename, GHashTable** csr_table_ptr) {
 	assert(*csr_table_ptr == NULL);
 
 	GHashTable* csr_table = g_hash_table_new(g_str_hash, g_str_equal);
-
-	FILE *stream = g_fopen(filename, "rb");
-	if (!stream) {
-		sr_err("Failed to open %s: %s", filename, g_strerror(errno));
-		goto err;
+	if (!csv_parse_file(filename, (csv_parse_line_t)(&csr_parse_line), (void*)csr_table)) {
+		g_hash_table_destroy(csr_table);
+		return SR_ERR;
+	} else {
+		*csr_table_ptr = csr_table;
+		return SR_OK;
 	}
-
-	// Get filesize
-	int64_t filesize = sr_file_get_size(stream);
-	if (filesize < 0) {
-		sr_err("Failed to get size of %s: %s", filename, g_strerror(errno));
-		goto err;
-	}
-
-	GString *data = g_string_sized_new(filesize+1);
-	data->str[filesize] = '\0';
-
-	size_t count = fread(data->str, 1, data->allocated_len - 1, stream);
-	if (count != data->allocated_len - 1 && ferror(stream)) {
-		sr_err("Failed to read %s: %s", filename, g_strerror(errno));
-	}
-	g_string_set_size(data, count);
-
-	char* data_token = data->str;
-	char* data_token_saveptr = NULL;
-	while(true) {
-		char* token = strtok_r(data_token, "\n", &data_token_saveptr);
-		data_token = NULL;
-
-		if (token == NULL) {
-			break;
-		}
-
-		size_t token_len = strlen(token);
-		// Deal with Windows line endings..
-		if (token[token_len-1] == '\r') {
-			token[token_len--] = '\0';
-		}
-
-		struct csr_entry* csr = _parse_csr_line(token);
-		assert(csr);
-		g_hash_table_insert(csr_table, csr->name, csr);
-	}
-
-	*csr_table_ptr = csr_table;
-	return SR_OK;
-err:
-	g_hash_table_destroy(csr_table);
-	fclose(stream);
-	g_string_free(data, TRUE);
-	return SR_ERR;
 }
 
 int csr_data_width(GHashTable* csr_table) {
@@ -296,7 +255,7 @@ static int _eb_csr_read(
 
 	// Send the request
 	size_t req_size = etherbone_size(req);
-	sr_spew("Packet size: %d\n", etherbone_size(req));
+	sr_spew("Packet size: %zu\n", etherbone_size(req));
 	size_t r = sr_scpi_write_data(conn, (char*)etherbone_htobe(req), req_size);
 	assert(r == req_size);
 
@@ -305,7 +264,7 @@ static int _eb_csr_read(
 	struct etherbone_packet* res = etherbone_new(ETHERBONE_WRITE, 0);
 	size_t res_hdr_size = etherbone_size(res);
 	r = sr_scpi_read_data(conn, (char*)res, res_hdr_size);
-	sr_spew("Response size: %d\n", r);
+	sr_spew("Response size: %zu\n", r);
 	assert(r == res_hdr_size);
 
 	// - record[0].values
@@ -314,7 +273,7 @@ static int _eb_csr_read(
 	size_t res_full_size = etherbone_size(res);
 	r = sr_scpi_read_data(conn, (char*)(&(res->records[0].values[0])), res_full_size-res_hdr_size);
 
-	sr_spew("Response size: %d\n", r);
+	sr_spew("Response size: %zu\n", r);
 	assert(r == (res_full_size-res_hdr_size));
 	assert(etherbone_check(res));
 
@@ -327,8 +286,6 @@ static int _eb_csr_read(
 		size_t dst = i;
 		size_t src = i;
 #endif
-		assert(dst >= 0);
-		assert(src >= 0);
 		assert(dst < csr->location.width);
 		assert(src < csr->location.width);
 

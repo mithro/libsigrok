@@ -28,7 +28,9 @@
 
 #include "scpi.h"
 #include "protocol.h"
+
 #include "csr.h"
+#include "analyzer.h"
 
 #define LOG_PREFIX "litescope"
 

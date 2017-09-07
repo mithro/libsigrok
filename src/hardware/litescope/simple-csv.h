@@ -17,16 +17,14 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef LIBSIGROK_HARDWARE_LITESCOPE_ANALYZER_H
-#define LIBSIGROK_HARDWARE_LITESCOPE_ANALYZER_H
+#ifndef LIBSIGROK_HARDWARE_LITESCOPE_SIMPLE_CSV_H
+#define LIBSIGROK_HARDWARE_LITESCOPE_SIMPLE_CSV_H
 
 #include <config.h>
 
-#include <stdint.h>
 #include <stdbool.h>
-#include <glib.h>
 
-int analyzer_parse_file(const char* filename, GHashTable** csr_table_ptr);
-bool analyzer_parse_line(char* line, GHashTable* csr_table_ptr);
+typedef bool (*csv_parse_line_t)(char* line, void* private_data);
+int csv_parse_file(const char* filename, csv_parse_line_t parse_line_callback, void* private_data);
 
 #endif

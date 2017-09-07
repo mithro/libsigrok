@@ -389,15 +389,18 @@ src_libdrivers_la_SOURCES += \
 endif
 if HW_LITESCOPE
 src_libdrivers_la_SOURCES += \
-	src/hardware/litescope/protocol.h \
-	src/hardware/litescope/protocol.c \
-	src/hardware/litescope/api.c \
-	src/hardware/litescope/csr.h \
-	src/hardware/litescope/csr.c \
+	src/hardware/litescope/easy-eb.h \
+	src/hardware/litescope/easy-eb.c \
+	src/hardware/litescope/simple-csv.h \
+	src/hardware/litescope/simple-csv.c \
 	src/hardware/litescope/analyzer.h \
 	src/hardware/litescope/analyzer.c \
-	src/hardware/litescope/easy-eb.h \
-	src/hardware/litescope/easy-eb.c
+	src/hardware/litescope/csr.h \
+	src/hardware/litescope/csr.c \
+	src/hardware/litescope/protocol.h \
+	src/hardware/litescope/protocol.c \
+	src/hardware/litescope/api.c
+
 endif
 if HW_MANSON_HCS_3XXX
 src_libdrivers_la_SOURCES += \

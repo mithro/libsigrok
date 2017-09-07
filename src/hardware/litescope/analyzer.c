@@ -46,16 +46,17 @@ struct analyzer* analyzer_append_signals(struct analyzer* an) {
 	return new_an;
 }
 
-GHashTable* analyzer_signals(struct analyzer* an, size_t group_num) {
+GHashTable* analyzer_signals(const struct analyzer* an, size_t group) {
 	assert(an != NULL);
-	assert(group_num < an->signal_groups);
-	GHashTable* ht = an->signals[group_num];
+	assert(group < an->signal_groups);
+	GHashTable* ht = an->signals[group];
 	assert(ht != NULL);
 	return ht;
 }
 
-size_t* _analyzer_signals_shift(struct analyzer* an, size_t group_num) {
-	GHashTable* ht = analyzer_signals(an, group_num);
+size_t* _analyzer_signals_shift(const struct analyzer* an, size_t group) {
+	GHashTable* ht = analyzer_signals(an, group);
+	assert(ht != NULL);
 	size_t* shift = g_hash_table_lookup(ht, "_shift");
 	assert(shift != NULL);
 	return shift;

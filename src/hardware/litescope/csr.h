@@ -121,10 +121,10 @@ bool csr_parse_line(char* line, GHashTable* csr_table);
 int csr_get_constant(const GHashTable* csr_table, const char* name);
 int csr_data_width(const GHashTable* csr_table);
 
-EB_CSR_FUNCTIONS_DEF(bool);
-EB_CSR_FUNCTIONS_DEF(uint8_t);
-EB_CSR_FUNCTIONS_DEF(uint16_t);
-EB_CSR_FUNCTIONS_DEF(uint32_t);
-EB_CSR_FUNCTIONS_DEF(uint64_t);
+EB_CSR_FUNCTIONS_DEF(bool)
+EB_CSR_FUNCTIONS_DEF(uint8_t)
+EB_CSR_FUNCTIONS_DEF(uint16_t)
+EB_CSR_FUNCTIONS_DEF(uint32_t)
+EB_CSR_FUNCTIONS_DEF(uint64_t)
 
 #endif

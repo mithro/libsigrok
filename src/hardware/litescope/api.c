@@ -51,21 +51,6 @@ static const uint32_t drvopts[] = {
 };
 
 static const uint32_t devopts[] = {
-//	/** The device supports setting a pre/post-trigger capture ratio. */
-//	SR_CONF_CAPTURE_RATIO,
-//
-//	/** The device supports run-length encoding (RLE). */
-//	SR_CONF_RLE,
-//
-//	/** Trigger source. */
-//	SR_CONF_TRIGGER_SOURCE,
-//	/**
-//	 * Enabling/disabling channel.
-//	 * @arg type: boolean
-//	 * @arg get: @b true if currently enabled
-//	 * @arg set: enable/disable
-//	 */
-//	SR_CONF_ENABLED,
 //	/**
 //	 * Channel configuration.
 //	 * @arg type: string
@@ -80,16 +65,17 @@ static const uint32_t devopts[] = {
 //	 * starts or stops the internal logging. */
 //	SR_CONF_DATALOG,
 //
-//
-//
 	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	SR_CONF_SAMPLERATE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+//	/**
+//	 * Enabling/disabling channel.
+//	 * @arg type: boolean
+//	 * @arg get: @b true if currently enabled
+//	 * @arg set: enable/disable
+//	 */
+//	SR_CONF_ENABLED,
 	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
+	/** The device supports setting a pre/post-trigger capture ratio. */
 	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
-	SR_CONF_PATTERN_MODE | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
-	SR_CONF_EXTERNAL_CLOCK | SR_CONF_GET | SR_CONF_SET,
-	SR_CONF_SWAP | SR_CONF_SET,
-	SR_CONF_RLE | SR_CONF_GET | SR_CONF_SET,
 };
 
 static const int32_t trigger_matches[] = {
@@ -156,6 +142,42 @@ err:
 
 static struct analyzer *global_analyzer = NULL;
 
+#define BUF_SIZE 1023
+
+char* g_hash_key_prefix(GHashTable* ht) {
+	assert(ht != NULL);
+
+	const char *prefix_str = NULL;
+	size_t prefix_str_pos = (size_t)-1;
+
+	GHashTableIter iter;
+	const char *key = NULL;
+	void *value = NULL;
+
+	g_hash_table_iter_init (&iter, ht);
+	while (g_hash_table_iter_next(&iter, (void*)&key, &value)) {
+		assert(key != NULL);
+		assert(value != NULL);
+		if (strcmp(key, "_shift") == 0)
+			continue;
+
+		if (prefix_str == NULL) {
+			prefix_str = key;
+		}
+
+		size_t prefix_cur = 0;
+		while(((prefix_cur < strlen(prefix_str)) && (prefix_cur < strlen(key))) &&
+				prefix_str[prefix_cur] == key[prefix_cur]) {
+			prefix_cur++;
+		}
+		//sr_spew("prefix:%s[%zd] (%s %s)\n", strndup(key, prefix_cur), prefix_cur, key, prefix_str);
+		if (prefix_cur < prefix_str_pos) {
+			prefix_str_pos = prefix_cur;
+		}
+	}
+	return g_strndup(prefix_str, prefix_str_pos);
+}
+
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 {
 	struct sr_dev_inst *sdi;
@@ -218,18 +240,25 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	sdi->inst_type = SR_INST_SCPI;
 	sdi->conn = scpi;
 
+	char temp_buf[BUF_SIZE+1] = {0};
+
 	int j = 0;
 	for (size_t i = 0; i < global_analyzer->signal_groups; i++) {
-		GHashTableIter iter;
-		const char *key = NULL;
-		struct analyzer_signal *value = NULL;
-		
+		GHashTable* ht = analyzer_signals(global_analyzer, i);
+		char *prefix = g_hash_key_prefix(ht);
+		sr_spew("Group %zd prefix: %s (%zd)\n", i, prefix, strlen(prefix));
+
 		struct sr_channel_group *cg = g_malloc0(sizeof(struct sr_channel_group));
 		assert(cg != NULL);
+		snprintf(temp_buf, BUF_SIZE, "Group %s", prefix);
+		cg->name = g_strdup(temp_buf);
 		assert(global_analyzer != NULL);
 		assert(global_analyzer->signals[i] != NULL);
 
-		g_hash_table_iter_init (&iter, global_analyzer->signals[i]);
+		GHashTableIter iter;
+		const char *key = NULL;
+		struct analyzer_signal *value = NULL;
+		g_hash_table_iter_init (&iter, ht);
 		while (g_hash_table_iter_next(&iter, (void*)&key, (void*)&value)) {
 			assert(key != NULL);
 			assert(value != NULL);
@@ -237,11 +266,28 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 				continue;
 
 			assert(value->name != NULL);
-			struct sr_channel* ch = sr_channel_new(
-				sdi, j, SR_CHANNEL_LOGIC, TRUE, g_strdup(value->name));
 
-			cg->channels = g_slist_append(cg->channels, ch);
-			j++;
+			if (value->bits > 1) {
+				for (size_t b = 0; b < value->bits; b++) {
+					if (strlen(prefix) < strlen(key)) {
+						snprintf(temp_buf, BUF_SIZE, "%s[%zd]", value->name+strlen(prefix), b);
+					} else {
+						snprintf(temp_buf, BUF_SIZE, "%zd", b);
+					}
+
+					struct sr_channel* ch = sr_channel_new(
+						sdi, j, SR_CHANNEL_LOGIC, i == 0, g_strdup(temp_buf));
+
+					cg->channels = g_slist_append(cg->channels, ch);
+					j++;
+				}
+			} else {
+				struct sr_channel* ch = sr_channel_new(
+					sdi, j, SR_CHANNEL_LOGIC, i == 0, g_strdup(value->name));
+
+				cg->channels = g_slist_append(cg->channels, ch);
+				j++;
+			}
 		}
 		sdi->channel_groups = g_slist_append(sdi->channel_groups, cg);
 	}

@@ -47,8 +47,8 @@ struct analyzer {
 };
 
 struct analyzer* analyzer_append_signals(struct analyzer* an);
-GHashTable* analyzer_signals(struct analyzer* an, size_t group_num);
-size_t* _analyzer_signals_shift(struct analyzer* an, size_t group_num);
+GHashTable* analyzer_signals(const struct analyzer* an, size_t group);
+size_t* _analyzer_signals_shift(const struct analyzer* an, size_t group);
 void analyzer_free(struct analyzer** an);
 
 int analyzer_parse_file(const char* filename, struct analyzer** an_ptr);

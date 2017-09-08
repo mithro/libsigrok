@@ -34,61 +34,18 @@
 
 #define BUF_SIZE (1024-1)
 
-struct analyzer* analyzer_append_signals(struct analyzer* an) {
-	assert(an != NULL);
-	an->signal_groups++;
-	struct analyzer *new_an = g_realloc(
-		an, sizeof(struct analyzer) + sizeof(GHashTable*) * an->signal_groups);
-	assert(new_an != NULL);
-	GHashTable** ht = &(new_an->signals[new_an->signal_groups-1]);
-	*ht = g_hash_table_new(g_str_hash, g_str_equal);
-	g_hash_table_insert(*ht, "_shift", g_malloc0(sizeof(size_t)));
-	return new_an;
-}
-
-GHashTable* analyzer_signals(const struct analyzer* an, size_t group) {
-	assert(an != NULL);
-	assert(group < an->signal_groups);
-	GHashTable* ht = an->signals[group];
-	assert(ht != NULL);
-	return ht;
-}
-
-size_t* _analyzer_signals_shift(const struct analyzer* an, size_t group) {
-	GHashTable* ht = analyzer_signals(an, group);
-	assert(ht != NULL);
-	size_t* shift = g_hash_table_lookup(ht, "_shift");
-	assert(shift != NULL);
-	return shift;
-}
-
-void analyzer_free(struct analyzer** an_ptr) {
-	assert(an_ptr != NULL);
-	assert(*an_ptr != NULL);
-	for(size_t i = 0; i < (*an_ptr)->signal_groups; i++) {
-		g_hash_table_destroy((*an_ptr)->signals[i]);
-		(*an_ptr)->signals[i] = NULL;
-	}
-	if ((*an_ptr)->csrs != NULL) {
-		g_hash_table_destroy((*an_ptr)->csrs);
-		(*an_ptr)->csrs = NULL;
-	}
-	g_free(*an_ptr);
-	*an_ptr = NULL;
-}
-
-char* analyzer_signal_str(const struct analyzer_signal* signal, size_t group) {
+char* analyzer_channel_str(const struct sr_channel* ch, size_t channel_group) {
 	char buf[BUF_SIZE+1];
 	buf[BUF_SIZE] = '\0';
 
-	assert(signal);
+	assert(ch);
 
-	snprintf(buf, BUF_SIZE, "signal%zd@%p(%s, %d bits (x >> %d & 0x%x))\n",
-		 group, signal, signal->name, signal->bits, signal->shift, signal->mask);
+	snprintf(buf, BUF_SIZE, "signal%zd@%p(%s, %d)\n",
+		 channel_group, ch, ch->name, ch->index);
 	return g_strndup(buf, BUF_SIZE);
 }
 
-char* analyzer_config_str(const struct analyzer_config* config, size_t signal_groups) {
+char* analyzer_config_str(const struct analyzer_config* config, size_t channel_groups) {
 	char buf[BUF_SIZE+1];
 	buf[BUF_SIZE] = '\0';
 
@@ -98,7 +55,7 @@ char* analyzer_config_str(const struct analyzer_config* config, size_t signal_gr
 		 config,
 		 config->data_width, config->data_depth,
 		 config->cd_ratio,
-		 signal_groups);
+		 channel_groups);
 	return g_strndup(buf, BUF_SIZE);
 }
 
@@ -132,35 +89,91 @@ bool analyzer_parse_line(char* line, struct analyzer** an_ptr) {
 			return false;
 		}
 	} else if (strcmp(type, "signal") == 0) {
-		struct analyzer_signal* signal = g_malloc0(sizeof(struct analyzer_signal));
+
+		char temp_buf[BUF_SIZE] = {0};
+		struct sr_channel_group* cg = NULL;
 
 		size_t group_num = 0;
 		sscanf(group, "%zd", &group_num);
-		while (group_num >= (*an_ptr)->signal_groups) {
-			*an_ptr = analyzer_append_signals(*an_ptr);
+		while (group_num >= g_slist_length((*an_ptr)->channel_groups)) {
+			cg = g_malloc0(sizeof(struct sr_channel_group));
+			assert(cg != NULL);
+
+			snprintf(temp_buf, BUF_SIZE,
+				 "Group %d", g_slist_length((*an_ptr)->channel_groups));
+
+			cg->name = g_strdup(temp_buf);
+			(*an_ptr)->channel_groups = g_slist_append((*an_ptr)->channel_groups, cg);
 		}
-		size_t *shift = _analyzer_signals_shift(*an_ptr, group_num);
-		assert(shift != NULL);
 
-		signal->name = g_strdup(name);
-		sscanf(value, "%d", &(signal->bits));
+		cg = g_slist_nth_data((*an_ptr)->channel_groups, group_num);
+		assert(cg != NULL);
 
-		signal->mask = ~(-1 << signal->bits);
-		signal->shift = *shift;
-		*shift += signal->bits;
+		size_t bits = 0;
+		sscanf(value, "%zd", &bits);
+		assert(bits > 0);
+		for (size_t i = 0; i < bits; i++) {
+			struct sr_channel* ch = g_malloc0(sizeof(struct sr_channel));
+			assert(ch != NULL);
 
-		sr_analyzer_log(spew, analyzer_signal_str, signal, group_num);
-		GHashTable *ht = analyzer_signals(*an_ptr, group_num);
-		assert(ht != NULL);
-		g_hash_table_insert(ht, signal->name, signal);
+			ch->index = g_slist_length(cg->channels);
+			ch->type = SR_CHANNEL_LOGIC;
+			ch->enabled = group_num == 0;
+
+			if (bits > 1) {
+				snprintf(temp_buf, BUF_SIZE, "%s[%zd]", name, i);
+			} else {
+				snprintf(temp_buf, BUF_SIZE, "%s", name);
+			}
+			ch->name = g_strdup(temp_buf);
+
+			cg->channels = g_slist_append(cg->channels, ch);
+		}
 	} else {
 		sr_err("Invalid config value '%s' in column 0 in line %zu.",
 			type, (size_t)0);
 		return false;
 	}
 	return true;
-
 }
+
+
+char* sr_channel_group_prefix(struct sr_channel_group* cg);
+char* sr_channel_group_prefix(struct sr_channel_group* cg) {
+	assert(cg != NULL);
+	assert(cg->channels != NULL);
+
+	const char *prefix_str = NULL;
+	size_t prefix_str_pos = (size_t)-1;
+
+	GSList* iter = cg->channels;
+	while (iter != NULL) {
+		struct sr_channel* ch = iter->data;
+		assert(ch != NULL);
+		assert(ch->name != NULL);
+		assert(strlen(ch->name) > 0);
+
+		if (prefix_str == NULL) {
+			prefix_str = ch->name;
+		}
+
+		size_t prefix_cur = 0;
+		while(((prefix_cur < strlen(prefix_str)) && (prefix_cur < strlen(ch->name))) &&
+				prefix_str[prefix_cur] == ch->name[prefix_cur] &&
+				prefix_str[prefix_cur] != '[') {
+			prefix_cur++;
+		}
+		sr_spew("prefix:%s[%zd] (%s %s)\n", g_strndup(ch->name, prefix_cur), prefix_cur, ch->name, prefix_str);
+		if (prefix_cur < prefix_str_pos) {
+			prefix_str_pos = prefix_cur;
+		}
+		iter = g_slist_next(iter);
+	}
+	assert(prefix_str != NULL);
+	assert(prefix_str_pos != (size_t)-1);
+	return g_strndup(prefix_str, prefix_str_pos);
+}
+
 
 int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 	assert(an_ptr != NULL);
@@ -168,10 +181,57 @@ int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 
 	struct analyzer* an = g_malloc0(sizeof(struct analyzer));
 	if (csv_parse_file(filename, (csv_parse_line_t)(&analyzer_parse_line), (void*)&an) != SR_OK) {
-		analyzer_free(&an);
+		//analyzer_free(&an);
 		return SR_ERR;
 	} else {
-		sr_analyzer_log(spew, analyzer_config_str, &(an->config), an->signal_groups);
+		assert(an != NULL);
+
+		// Give the channel groups names
+		GSList* iter = an->channel_groups;
+		while (iter != NULL) {
+			struct sr_channel_group* cg = iter->data;
+			assert(cg != NULL);
+
+			// Try and find a common prefix to all the channels in a group
+			char* prefix = sr_channel_group_prefix(cg);
+			size_t prefix_len = strlen(prefix);
+
+			// Did we find a prefix?
+			char temp_buf[BUF_SIZE+1];
+			temp_buf[BUF_SIZE] = '\0';
+			if (prefix_len > 0) {
+				snprintf(temp_buf, BUF_SIZE, "Group %s", prefix);
+				// Strip trailing characters
+				while(temp_buf[strlen(temp_buf)-1] == '_') {
+					temp_buf[strlen(temp_buf)-1] = '\0';
+				}
+				cg->name = g_strdup(temp_buf);
+
+				// Strip the prefix from all the channel names.
+				GSList* jter = cg->channels;
+				while(jter != NULL) {
+					struct sr_channel* ch = jter->data;
+					assert(ch != NULL);
+					assert(ch->name != NULL);
+					assert(strlen(ch->name) > prefix_len);
+					snprintf(temp_buf, BUF_SIZE, "%s", ch->name+prefix_len);
+					g_free(ch->name);
+					ch->name = g_strdup(temp_buf);
+					jter = g_slist_next(jter);
+				}
+
+			// Resort to just using the "Group <index>"
+			} else {
+				snprintf(temp_buf, BUF_SIZE, "Group %d",
+					g_slist_position(an->channel_groups, iter));
+				cg->name = g_strdup(temp_buf);
+			}
+
+			iter = g_slist_next(iter);
+		}
+
+
+		sr_analyzer_log(spew, analyzer_config_str, &(an->config), g_slist_length(an->channel_groups));
 		*an_ptr = an;
 		return SR_OK;
 	}

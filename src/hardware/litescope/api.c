@@ -65,7 +65,7 @@ static const uint32_t devopts[] = {
 //	 * starts or stops the internal logging. */
 //	SR_CONF_DATALOG,
 //
-	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+//	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
 //	/**
 //	 * Enabling/disabling channel.
 //	 * @arg type: boolean
@@ -73,9 +73,11 @@ static const uint32_t devopts[] = {
 //	 * @arg set: enable/disable
 //	 */
 //	SR_CONF_ENABLED,
+
+
 	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
 	/** The device supports setting a pre/post-trigger capture ratio. */
-	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
+//	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
 };
 
 static const int32_t trigger_matches[] = {
@@ -144,40 +146,6 @@ static struct analyzer *global_analyzer = NULL;
 
 #define BUF_SIZE 1023
 
-char* g_hash_key_prefix(GHashTable* ht) {
-	assert(ht != NULL);
-
-	const char *prefix_str = NULL;
-	size_t prefix_str_pos = (size_t)-1;
-
-	GHashTableIter iter;
-	const char *key = NULL;
-	void *value = NULL;
-
-	g_hash_table_iter_init (&iter, ht);
-	while (g_hash_table_iter_next(&iter, (void*)&key, &value)) {
-		assert(key != NULL);
-		assert(value != NULL);
-		if (strcmp(key, "_shift") == 0)
-			continue;
-
-		if (prefix_str == NULL) {
-			prefix_str = key;
-		}
-
-		size_t prefix_cur = 0;
-		while(((prefix_cur < strlen(prefix_str)) && (prefix_cur < strlen(key))) &&
-				prefix_str[prefix_cur] == key[prefix_cur]) {
-			prefix_cur++;
-		}
-		//sr_spew("prefix:%s[%zd] (%s %s)\n", strndup(key, prefix_cur), prefix_cur, key, prefix_str);
-		if (prefix_cur < prefix_str_pos) {
-			prefix_str_pos = prefix_cur;
-		}
-	}
-	return g_strndup(prefix_str, prefix_str_pos);
-}
-
 static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 {
 	struct sr_dev_inst *sdi;
@@ -240,56 +208,25 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	sdi->inst_type = SR_INST_SCPI;
 	sdi->conn = scpi;
 
-	char temp_buf[BUF_SIZE+1] = {0};
-
-	int j = 0;
-	for (size_t i = 0; i < global_analyzer->signal_groups; i++) {
-		GHashTable* ht = analyzer_signals(global_analyzer, i);
-		char *prefix = g_hash_key_prefix(ht);
-		sr_spew("Group %zd prefix: %s (%zd)\n", i, prefix, strlen(prefix));
-
-		struct sr_channel_group *cg = g_malloc0(sizeof(struct sr_channel_group));
+	GSList* iter = global_analyzer->channel_groups;
+	while (iter != NULL) {
+		struct sr_channel_group* cg = iter->data;
 		assert(cg != NULL);
-		snprintf(temp_buf, BUF_SIZE, "Group %s", prefix);
-		cg->name = g_strdup(temp_buf);
-		assert(global_analyzer != NULL);
-		assert(global_analyzer->signals[i] != NULL);
+		assert(cg->name != NULL);
+		assert(cg->channels != NULL);
 
-		GHashTableIter iter;
-		const char *key = NULL;
-		struct analyzer_signal *value = NULL;
-		g_hash_table_iter_init (&iter, ht);
-		while (g_hash_table_iter_next(&iter, (void*)&key, (void*)&value)) {
-			assert(key != NULL);
-			assert(value != NULL);
-			if (strcmp(key, "_shift") == 0)
-				continue;
-
-			assert(value->name != NULL);
-
-			if (value->bits > 1) {
-				for (size_t b = 0; b < value->bits; b++) {
-					if (strlen(prefix) < strlen(key)) {
-						snprintf(temp_buf, BUF_SIZE, "%s[%zd]", value->name+strlen(prefix), b);
-					} else {
-						snprintf(temp_buf, BUF_SIZE, "%zd", b);
-					}
-
-					struct sr_channel* ch = sr_channel_new(
-						sdi, j, SR_CHANNEL_LOGIC, i == 0, g_strdup(temp_buf));
-
-					cg->channels = g_slist_append(cg->channels, ch);
-					j++;
-				}
-			} else {
-				struct sr_channel* ch = sr_channel_new(
-					sdi, j, SR_CHANNEL_LOGIC, i == 0, g_strdup(value->name));
-
-				cg->channels = g_slist_append(cg->channels, ch);
-				j++;
-			}
+		// Bind all the channels in the channel group to the sdi
+		// object.
+		GSList* jter = cg->channels;
+		while(jter != NULL) {
+			struct sr_channel* ch = jter->data;
+			ch->sdi = sdi;
+			sdi->channels = g_slist_append(sdi->channels, ch);
+			jter = g_slist_next(jter);
 		}
+		// Bind the channel group to the sdi object.
 		sdi->channel_groups = g_slist_append(sdi->channel_groups, cg);
+		iter = g_slist_next(iter);
 	}
 
 	devc = g_malloc0(sizeof(struct dev_context));
@@ -307,22 +244,26 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 	for (l = options; l; l = l->next) {
 		struct sr_config *src = l->data;
 		switch (src->key) {
-		case SR_CONF_CONFIGDIR:
+		case SR_CONF_CONFIGDIR: {
 			config_dir = g_variant_get_string(src->data, NULL);
 			sr_dbg("litescope::scan::config_dir %s\n", config_dir);
 			break;
+		}
 		}
 	}
 
 	// Read in the analyzer config file
 	struct analyzer* analyzer = analyzer_read_config(config_dir);
 	assert(analyzer != NULL);
-	assert(analyzer->signals != NULL);
+	assert(analyzer->config.data_width > 0);
+	assert(analyzer->config.data_depth > 0);
+	assert(analyzer->config.cd_ratio > 0);
 	assert(analyzer->csrs != NULL);
+	assert(analyzer->channel_groups != NULL);
 	global_analyzer = analyzer;
 
 	return sr_scpi_scan(di->context, options, probe_device);
-//	
+//
 //
 //	struct drv_context *drvc;
 //	GSList *devices;
@@ -359,16 +300,38 @@ static int dev_close(struct sr_dev_inst *sdi)
 	return SR_OK;
 }
 
+
+static void log_key(const struct sr_dev_inst *sdi,
+	const struct sr_channel_group *cg, uint32_t key, int op, GVariant *data)
+{
+	const char *opstr;
+	const struct sr_key_info *srci;
+	gchar *tmp_str = "";
+
+	opstr = op == SR_CONF_GET ? "get" : op == SR_CONF_SET ? "set" : "list";
+	srci = sr_key_info_get(SR_KEY_CONFIG, key);
+
+	if (data != NULL) {
+		tmp_str = g_variant_print(data, TRUE);
+	}
+	sr_spew("sr_config_%s(): key %x (%s) sdi %p cg %s -> %s", opstr, key,
+		srci ? srci->id : "NULL", sdi, cg ? cg->name : "NULL",
+		data ? tmp_str : "NULL");
+	if (data != NULL) {
+		g_free(tmp_str);
+	}
+}
+
 static int config_get(uint32_t key, GVariant **data,
 	const struct sr_dev_inst *sdi, const struct sr_channel_group *cg)
 {
 	int ret;
 
-	(void)sdi;
-	(void)data;
-	(void)cg;
+	sr_dbg("litescope::config_get key:%x data:%p sdi:%p cg:%s\n",
+		key, *data, sdi, cg->name);
 
-	sr_dbg("litescope::config_get\n");
+	log_key(sdi, cg, key, SR_CONF_GET, *data);
+
 	ret = SR_OK;
 	switch (key) {
 	/* TODO */
@@ -384,11 +347,11 @@ static int config_set(uint32_t key, GVariant *data,
 {
 	int ret;
 
-	(void)sdi;
-	(void)data;
-	(void)cg;
+	sr_dbg("litescope::config_set key:%x data:%p sdi:%p cg:%s\n",
+		key, data, sdi, cg != NULL ? cg->name : "(nil)");
 
-	sr_dbg("litescope::config_set\n");
+	log_key(sdi, cg, key, SR_CONF_SET, data);
+
 	ret = SR_OK;
 	switch (key) {
 	/* TODO */
@@ -402,6 +365,11 @@ static int config_set(uint32_t key, GVariant *data,
 static int config_channel_set(const struct sr_dev_inst *sdi,
 	struct sr_channel *ch, unsigned int changes)
 {
+	assert(sdi != NULL);
+	assert(ch != NULL);
+	sr_dbg("litescope::config_channel_set sdi:%p ch:%s\n",
+		sdi, ch != NULL ? ch->name : "(nil)");
+
 	/* Currently we only handle SR_CHANNEL_SET_ENABLED. */
 	if (changes != SR_CHANNEL_SET_ENABLED)
 		return SR_ERR_NA;
@@ -414,23 +382,30 @@ static int config_list(uint32_t key, GVariant **data,
 {
 	int ret;
 
-	sr_dbg("litescope::config_list\n");
+	sr_dbg("litescope::config_list 1 key:%x data:%p sdi:%p cg:%s\n",
+		key, *data, sdi, cg != NULL ? cg->name : "(nil)");
+	log_key(sdi, cg, key, SR_CONF_LIST, NULL);
+
 	ret = SR_OK;
 	switch (key) {
 	case SR_CONF_SCAN_OPTIONS:
-		sr_dbg("litescope::config_list SR_CONF_SCAN_OPTIONS %p\n", cg);
+		sr_dbg("litescope::config_list 2 SR_CONF_SCAN_OPTIONS %p\n", cg);
 		return STD_CONFIG_LIST(key, data, sdi, cg, scanopts, NULL, NULL);
 
 	case SR_CONF_DEVICE_OPTIONS:
-		sr_dbg("litescope::config_list SR_CONF_DEVICE_OPTIONS %p\n", cg);
+		sr_dbg("litescope::config_list 2 SR_CONF_DEVICE_OPTIONS %p\n", cg);
 		if (!cg)
 			return STD_CONFIG_LIST(key, data, sdi, cg, NULL, drvopts, devopts);
 		//*data = std_gvar_array_u32(ARRAY_AND_SIZE(devopts_cg_analog));
 		break;
 
+	case SR_CONF_TRIGGER_MATCH:
+		*data = std_gvar_array_i32(ARRAY_AND_SIZE(trigger_matches));
+		break;
+
 	/* TODO */
 	default:
-		sr_dbg("litescope::config_list ??? %x\n", key);
+		sr_dbg("litescope::config_list 2 ??? %x\n", key);
 		return SR_ERR_NA;
 	}
 

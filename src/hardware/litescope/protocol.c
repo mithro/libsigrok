@@ -39,3 +39,74 @@ SR_PRIV int litescope_receive_data(int fd, int revents, void *cb_data)
 
 	return TRUE;
 }
+
+//
+//	/*
+//	 * Send "frame begin" packet upon reception of data for the
+//	 * first enabled channel.
+//	 */
+//	if (devc->current_channel == devc->enabled_channels) {
+//		packet.type = SR_DF_FRAME_BEGIN;
+//		sr_session_send(sdi, &packet);
+//	}
+//
+//	if (ch->type != SR_CHANNEL_ANALOG)
+//		return SR_ERR;
+//
+//	/* Pass on the received data of the channel(s). */
+//	if (sr_scpi_read_data(sdi->conn, buf, 4) != 4) {
+//		sr_err("Reading header failed.");
+//		return TRUE;
+//	}
+//
+//	if (sr_scpi_get_block(sdi->conn, NULL, &data) != SR_OK) {
+//		if (data)
+//			g_byte_array_free(data, TRUE);
+//		return TRUE;
+//	}
+//
+//	analog.encoding = &encoding;
+//	analog.meaning = &meaning;
+//	analog.spec = &spec;
+//
+//	if (lecroy_waveform_to_analog(data, &analog) != SR_OK)
+//		return SR_ERR;
+//
+//	meaning.channels = g_slist_append(NULL, ch);
+//	packet.payload = &analog;
+//	packet.type = SR_DF_ANALOG;
+//	sr_session_send(sdi, &packet);
+//
+//	g_byte_array_free(data, TRUE);
+//	data = NULL;
+//
+//	g_slist_free(meaning.channels);
+//	g_free(analog.data);
+//
+//	/*
+//	 * Advance to the next enabled channel. When data for all enabled
+//	 * channels was received, then flush potentially queued logic data,
+//	 * and send the "frame end" packet.
+//	 */
+//	if (devc->current_channel->next) {
+//		devc->current_channel = devc->current_channel->next;
+//		lecroy_xstream_request_data(sdi);
+//		return TRUE;
+//	}
+//
+//	packet.type = SR_DF_FRAME_END;
+//	sr_session_send(sdi, &packet);
+//
+//	/*
+//	 * End of frame was reached. Stop acquisition after the specified
+//	 * number of frames, or continue reception by starting over at
+//	 * the first enabled channel.
+//	 */
+//	if (++devc->num_frames == devc->frame_limit) {
+//		sr_dev_acquisition_stop(sdi);
+//	} else {
+//		devc->current_channel = devc->enabled_channels;
+//		lecroy_xstream_request_data(sdi);
+//	}
+//
+//

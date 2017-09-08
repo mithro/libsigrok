@@ -26,13 +26,6 @@
 #include <stdbool.h>
 #include <glib.h>
 
-struct analyzer_signal {
-	char* name;
-	uint32_t bits;
-	uint32_t mask;
-	uint32_t shift;
-};
-
 struct analyzer_config {
 	int data_width;
 	int data_depth;
@@ -42,20 +35,32 @@ struct analyzer_config {
 struct analyzer {
 	struct analyzer_config config;
 	GHashTable* csrs;
-	size_t signal_groups;
-	GHashTable* signals[];
+	GSList* channel_groups;
 };
 
-struct analyzer* analyzer_append_signals(struct analyzer* an);
+// struct sr_channel_group *cg = g_malloc0(sizeof(struct sr_channel_group));
+//
+//	struct sr_channel* ch = g_malloc0(sizeof(struct sr_channel));
+//	ch->index = index;
+//	ch->type = SR_CHANNEL_LOGIC;
+//	ch->enabled = i == 0;
+//	ch->name = g_strdup(name);
+//	cg->channels = g_slist_append(cg->channels, ch);
+//
+//	//struct sr_channel* ch = sr_channel_new(
+//	//	sdi, g_slist_length(cg->channels), SR_CHANNEL_LOGIC, i == 0, g_strdup(temp_buf));
+//
+//
+// g_slist_append(analyzer->channel_groups, cg);
+
 GHashTable* analyzer_signals(const struct analyzer* an, size_t group);
-size_t* _analyzer_signals_shift(const struct analyzer* an, size_t group);
 void analyzer_free(struct analyzer** an);
 
 int analyzer_parse_file(const char* filename, struct analyzer** an_ptr);
 bool analyzer_parse_line(char* line, struct analyzer** an_ptr);
 
-char* analyzer_signal_str(const struct analyzer_signal* signal, size_t group);
-char* analyzer_config_str(const struct analyzer_config* config, size_t signal_groups);
+char* analyzer_channel_str(const struct sr_channel* ch, size_t channel_group);
+char* analyzer_config_str(const struct analyzer_config* config, size_t channel_groups);
 
 #define sr_analyzer_log(LEVEL, func, value, group) \
 	do { \

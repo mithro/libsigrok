@@ -53,7 +53,7 @@ char* analyzer_config_str(const struct analyzer_config* config, size_t channel_g
 
 	snprintf(buf, BUF_SIZE, "config@%p(width:%d, depth:%d, cd_ratio:%d, groups:%zd)\n",
 		 config,
-		 config->data_width, config->data_depth,
+		 config->samples_bitwidth, config->samples_maxdepth,
 		 config->cd_ratio,
 		 channel_groups);
 	return g_strndup(buf, BUF_SIZE);
@@ -78,9 +78,9 @@ bool analyzer_parse_line(char* line, struct analyzer** an_ptr) {
 
 	if (strcmp(type, "config") == 0) {
 		if (strcmp(name, "dw") == 0) {
-			sscanf(value, "%d", &((*an_ptr)->config.data_width));
+			sscanf(value, "%d", &((*an_ptr)->config.samples_bitwidth));
 		} else if (strcmp(name, "depth") == 0) {
-			sscanf(value, "%d", &((*an_ptr)->config.data_depth));
+			sscanf(value, "%d", &((*an_ptr)->config.samples_maxdepth));
 		} else if (strcmp(name, "cd_ratio") == 0) {
 			sscanf(value, "%d", &((*an_ptr)->config.cd_ratio));
 		} else {
@@ -95,7 +95,7 @@ bool analyzer_parse_line(char* line, struct analyzer** an_ptr) {
 
 		size_t group_num = 0;
 		sscanf(group, "%zd", &group_num);
-		while (group_num >= g_slist_length((*an_ptr)->channel_groups)) {
+		while(group_num >= g_slist_length((*an_ptr)->channel_groups)) {
 			cg = g_malloc0(sizeof(struct sr_channel_group));
 			assert(cg != NULL);
 
@@ -146,8 +146,7 @@ char* sr_channel_group_prefix(struct sr_channel_group* cg) {
 	const char *prefix_str = NULL;
 	size_t prefix_str_pos = (size_t)-1;
 
-	GSList* iter = cg->channels;
-	while (iter != NULL) {
+	for (GSList* iter = cg->channels; iter; iter = g_slist_next(iter)) {
 		struct sr_channel* ch = iter->data;
 		assert(ch != NULL);
 		assert(ch->name != NULL);
@@ -167,7 +166,6 @@ char* sr_channel_group_prefix(struct sr_channel_group* cg) {
 		if (prefix_cur < prefix_str_pos) {
 			prefix_str_pos = prefix_cur;
 		}
-		iter = g_slist_next(iter);
 	}
 	assert(prefix_str != NULL);
 	assert(prefix_str_pos != (size_t)-1);
@@ -187,8 +185,8 @@ int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 		assert(an != NULL);
 
 		// Give the channel groups names
-		GSList* iter = an->channel_groups;
-		while (iter != NULL) {
+		for (GSList* iter = an->channel_groups; iter; iter = g_slist_next(iter)) {
+
 			struct sr_channel_group* cg = iter->data;
 			assert(cg != NULL);
 
@@ -208,8 +206,7 @@ int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 				cg->name = g_strdup(temp_buf);
 
 				// Strip the prefix from all the channel names.
-				GSList* jter = cg->channels;
-				while(jter != NULL) {
+				for (GSList* jter = cg->channels; jter; jter = g_slist_next(jter)) {
 					struct sr_channel* ch = jter->data;
 					assert(ch != NULL);
 					assert(ch->name != NULL);
@@ -217,7 +214,6 @@ int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 					snprintf(temp_buf, BUF_SIZE, "%s", ch->name+prefix_len);
 					g_free(ch->name);
 					ch->name = g_strdup(temp_buf);
-					jter = g_slist_next(jter);
 				}
 
 			// Resort to just using the "Group <index>"
@@ -226,10 +222,7 @@ int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 					g_slist_position(an->channel_groups, iter));
 				cg->name = g_strdup(temp_buf);
 			}
-
-			iter = g_slist_next(iter);
 		}
-
 
 		sr_analyzer_log(spew, analyzer_config_str, &(an->config), g_slist_length(an->channel_groups));
 		*an_ptr = an;
@@ -237,6 +230,7 @@ int analyzer_parse_file(const char* filename, struct analyzer** an_ptr) {
 	}
 }
 
+/*
 int analyzer_run(struct sr_scpi_dev_inst *conn, const struct analyzer* an) {
 	// Drain the storage_mem_data fifo
 	uint16_t x = 0;
@@ -260,7 +254,7 @@ int analyzer_download(struct sr_scpi_dev_inst *conn, const struct analyzer* an) 
 
 	// Work out the amount of data in storage_mem_data fifo
 	uint16_t storage_length;
-	eb_csr_read_int16_t(conn, an->csrs, "analyzer_storage_length", &storage_length);
+	eb_csr_read_uint16_t(conn, an->csrs, "analyzer_storage_length", &storage_length);
 	int length = storage_length / an->config.cd_ratio;
 
 	// Read the data out of the storage_mem_data fifo
@@ -271,3 +265,4 @@ int analyzer_download(struct sr_scpi_dev_inst *conn, const struct analyzer* an) 
 	}
 	return SR_OK;
 }
+*/

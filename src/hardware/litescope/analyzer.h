@@ -27,8 +27,8 @@
 #include <glib.h>
 
 struct analyzer_config {
-	int data_width;
-	int data_depth;
+	int samples_bitwidth;
+	int samples_maxdepth;
 	int cd_ratio;
 };
 
@@ -69,9 +69,9 @@ char* analyzer_config_str(const struct analyzer_config* config, size_t channel_g
 		g_free(msg); \
 	} while(false)
 
-int analyzer_run(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
-bool analyzer_check(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
-int analyzer_download(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
+//int analyzer_run(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
+//bool analyzer_check(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
+//int analyzer_download(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
 
 
 #endif

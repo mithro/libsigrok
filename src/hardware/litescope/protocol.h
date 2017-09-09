@@ -20,6 +20,7 @@
 #ifndef LIBSIGROK_HARDWARE_LITESCOPE_PROTOCOL_H
 #define LIBSIGROK_HARDWARE_LITESCOPE_PROTOCOL_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <glib.h>
 #include <libsigrok/libsigrok.h>
@@ -27,9 +28,41 @@
 
 #define LOG_PREFIX "litescope"
 
-struct dev_context {
-	struct sr_channel_group **channel_groups;
+enum litescope_state {
+	LITESCOPE_STATE_INIT,
+	LITESCOPE_STATE_WRITE_TRIGGER_MASK,
+	LITESCOPE_STATE_WRITE_TRIGGER_VALUE,
+	LITESCOPE_STATE_FLUSHING,
+	LITESCOPE_STATE_WRITE_TRIGGER_OFFSET,
+	LITESCOPE_STATE_WRITE_LENGTH,
+	LITESCOPE_STATE_WRITE_RUN,
+	LITESCOPE_STATE_WAITING, // Waiting on the device to indicate it has triggered
+	LITESCOPE_STATE_READING, // Data is being read out of the memory
+	LITESCOPE_STATE_NOTIFY,  // Sending the data to sigrok
+	LITESCOPE_STATE_COMPLETE,
 };
+
+struct dev_context {
+	enum litescope_state state;
+
+	size_t sample_width;		// How many bytes each sample takes
+
+	uint8_t *trigger_mask;
+	uint8_t *trigger_value;
+	uint16_t trigger_at;		// Where the trigger point will be
+
+	uint16_t samples_max;		// Max number of samples
+	size_t samples_current;		// Current number of samples
+	uint8_t *samples_data;		// Actual sample data
+
+	struct etherbone_packet* request;
+	struct etherbone_packet* response;
+};
+
+SR_PRIV char* litescope_serial(struct sr_dev_inst *sdi);
+SR_PRIV bool litescope_poke(struct sr_dev_inst *sdi);
+SR_PRIV bool litescope_setup(struct sr_dev_inst *sdi);
+SR_PRIV bool litescope_poll(struct sr_dev_inst *sdi);
 
 SR_PRIV int litescope_receive_data(int fd, int revents, void *cb_data);
 

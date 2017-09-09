@@ -65,7 +65,7 @@ static const uint32_t devopts[] = {
 //	 * starts or stops the internal logging. */
 //	SR_CONF_DATALOG,
 //
-//	SR_CONF_LIMIT_SAMPLES | SR_CONF_GET | SR_CONF_SET | SR_CONF_LIST,
+	SR_CONF_LIMIT_SAMPLES | SR_CONF_SET,
 //	/**
 //	 * Enabling/disabling channel.
 //	 * @arg type: boolean
@@ -74,19 +74,30 @@ static const uint32_t devopts[] = {
 //	 */
 //	SR_CONF_ENABLED,
 
+//	{SR_CONF_CAPTURE_RATIO, SR_T_UINT64, "captureratio",
+//		"Pre-trigger capture ratio", NULL},
+
+//	{SR_CONF_BUFFERSIZE, SR_T_UINT64, "buffersize",
+//		"Buffer size", NULL},
+
+//	{SR_CONF_ENABLED, SR_T_BOOL, "enabled",
+//		"Channel enabled", NULL},
+
+//	{SR_CONF_LIMIT_SAMPLES, SR_T_UINT64, "limit_samples",
+//		"Sample limit", NULL},
 
 	SR_CONF_TRIGGER_MATCH | SR_CONF_LIST,
 	/** The device supports setting a pre/post-trigger capture ratio. */
 //	SR_CONF_CAPTURE_RATIO | SR_CONF_GET | SR_CONF_SET,
 };
 
+static const uint32_t devopts_cg[] = {
+};
+
 static const int32_t trigger_matches[] = {
 	SR_TRIGGER_ZERO,
 	SR_TRIGGER_ONE,
 };
-
-// 
-//
 
 static struct analyzer* analyzer_read_config(const char* config_dir) {
 	// construct the csr config file path
@@ -97,7 +108,7 @@ static struct analyzer* analyzer_read_config(const char* config_dir) {
 	sr_dbg("litescope::analyzer_read_config %s\n", analyzer_file);
 
 	// Parse the analyzer.csv file
-	struct analyzer *analyzer;
+	struct analyzer *analyzer = NULL;
 	if(analyzer_parse_file(analyzer_file, &analyzer) != SR_OK)
 		goto err;
 	assert(analyzer != NULL);
@@ -115,34 +126,18 @@ static struct analyzer* analyzer_read_config(const char* config_dir) {
 	assert(analyzer->csrs != NULL);
 	sr_info("litescope::csr_read_config %s with %d entries\n", csr_file, g_hash_table_size(analyzer->csrs));
 
-	sr_info("Device IP: %d.%d.%d.%d\n",
-		csr_get_constant(analyzer->csrs, "localip1"),
-		csr_get_constant(analyzer->csrs, "localip2"),
-		csr_get_constant(analyzer->csrs, "localip3"),
-		csr_get_constant(analyzer->csrs, "localip4"));
+//	sr_info("Device IP: %d.%d.%d.%d\n",
+//		csr_get_constant(analyzer->csrs, "localip1"),
+//		csr_get_constant(analyzer->csrs, "localip2"),
+//		csr_get_constant(analyzer->csrs, "localip3"),
+//		csr_get_constant(analyzer->csrs, "localip4"));
 
 	return analyzer;
 err:
-	if (analyzer != NULL) {
-		analyzer_free(&analyzer);
-	}
 	return NULL;
 }
 
-
-//	{SR_CONF_CAPTURE_RATIO, SR_T_UINT64, "captureratio",
-//		"Pre-trigger capture ratio", NULL},
-
-//	{SR_CONF_BUFFERSIZE, SR_T_UINT64, "buffersize",
-//		"Buffer size", NULL},
-
-//	{SR_CONF_ENABLED, SR_T_BOOL, "enabled",
-//		"Channel enabled", NULL},
-
-//	{SR_CONF_LIMIT_SAMPLES, SR_T_UINT64, "limit_samples",
-//		"Sample limit", NULL},
-
-static struct analyzer *global_analyzer = NULL;
+struct analyzer *global_analyzer = NULL;
 
 #define BUF_SIZE 1023
 
@@ -154,45 +149,6 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 
 	sr_dbg("litescope::probe_device %p\n", scpi);
 
-	// info_dna_id
-	uint64_t dna_id = (uint64_t)-1;
-	assert(global_analyzer != NULL);
-	if(eb_csr_read_uint64_t(scpi, global_analyzer->csrs, "info_dna_id", &dna_id) != SR_OK) {
-		return NULL;
-	}
-	assert(dna_id != (uint64_t)-1);
-	char dna_str[64] = {0};
-	snprintf(dna_str, 63, "0x%" PRIx64, dna_id);
-	sr_info("Device DNA: 0x%s\n", dna_str);
-
-	// Write 0x000f to the trigger
-	uint16_t trigger_value = 0xf;
-	if(eb_csr_write_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", trigger_value) != SR_OK) {
-		sr_err("1 - write to analyzer_frontend_trigger_value failed.");
-		return NULL;
-	}
-	trigger_value = 0;
-	if(eb_csr_read_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", &trigger_value) != SR_OK) {
-		sr_err("2 - read to analyzer_frontend_trigger_value failed.");
-		return NULL;
-	}
-	sr_spew("analyzer_frontend_trigger_value: %hx (should be 0x000f)", trigger_value);
-	assert(trigger_value == 0xf);
-
-	// Write 0xf000 to the trigger
-	trigger_value = 0xf000;
-	if(eb_csr_write_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", trigger_value) != SR_OK) {
-		sr_err("3 - write to analyzer_frontend_trigger_value failed.");
-		return NULL;
-	}
-	trigger_value = 0;
-	if(eb_csr_read_uint16_t(scpi, global_analyzer->csrs, "analyzer_frontend_trigger_value", &trigger_value) != SR_OK) {
-		sr_err("4 - read to analyzer_frontend_trigger_value failed.");
-		return NULL;
-	}
-	sr_spew("analyzer_frontend_trigger_value: %hx (should be 0xf000)", trigger_value);
-	assert(trigger_value == 0xf000);
-
 	sdi = NULL;
 	devc = NULL;
 	//hw_info = NULL;
@@ -203,13 +159,11 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	sdi->vendor = g_strdup("LiteScope");
 	sdi->model = g_strdup("Virtual Logic Analyzer");
 	sdi->version = g_strdup("v1.0");
-	sdi->serial_num = g_strdup(dna_str);
 	sdi->driver = &litescope_driver_info;
 	sdi->inst_type = SR_INST_SCPI;
 	sdi->conn = scpi;
 
-	GSList* iter = global_analyzer->channel_groups;
-	while (iter != NULL) {
+	for (GSList* iter = global_analyzer->channel_groups; iter; iter = g_slist_next(iter)) {
 		struct sr_channel_group* cg = iter->data;
 		assert(cg != NULL);
 		assert(cg->name != NULL);
@@ -217,19 +171,32 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 
 		// Bind all the channels in the channel group to the sdi
 		// object.
-		GSList* jter = cg->channels;
-		while(jter != NULL) {
+		for (GSList* jter = cg->channels; jter; jter = g_slist_next(jter)) {
 			struct sr_channel* ch = jter->data;
+			assert(ch != NULL);
 			ch->sdi = sdi;
 			sdi->channels = g_slist_append(sdi->channels, ch);
-			jter = g_slist_next(jter);
 		}
 		// Bind the channel group to the sdi object.
 		sdi->channel_groups = g_slist_append(sdi->channel_groups, cg);
-		iter = g_slist_next(iter);
 	}
 
+	// Read the serial number from the device.
+	sdi->serial_num = litescope_serial(sdi);
+
 	devc = g_malloc0(sizeof(struct dev_context));
+
+	// FIXME: Make sure this rounds up...
+	devc->sample_width = ROUND_UP(global_analyzer->config.samples_bitwidth, 8);
+	sr_spew("sample byte width %hu (bit width %d)", devc->sample_width, global_analyzer->config.samples_bitwidth);
+	assert(devc->sample_width > 0);
+	devc->samples_max = global_analyzer->config.samples_maxdepth;
+	devc->trigger_mask = g_malloc0_n(sizeof(uint8_t), devc->sample_width);
+	devc->trigger_mask[0] = 0xff;
+	devc->trigger_mask[1] = 0xff;
+	devc->trigger_value = g_malloc0_n(sizeof(uint8_t), devc->sample_width);
+	devc->samples_data = g_malloc0_n(devc->sample_width, devc->samples_max);
+
 	sdi->priv = devc;
 	return sdi;
 }
@@ -255,49 +222,30 @@ static GSList *scan(struct sr_dev_driver *di, GSList *options)
 	// Read in the analyzer config file
 	struct analyzer* analyzer = analyzer_read_config(config_dir);
 	assert(analyzer != NULL);
-	assert(analyzer->config.data_width > 0);
-	assert(analyzer->config.data_depth > 0);
+	assert(analyzer->config.samples_bitwidth > 0);
+	assert(analyzer->config.samples_maxdepth > 0);
 	assert(analyzer->config.cd_ratio > 0);
 	assert(analyzer->csrs != NULL);
 	assert(analyzer->channel_groups != NULL);
 	global_analyzer = analyzer;
 
 	return sr_scpi_scan(di->context, options, probe_device);
-//
-//
-//	struct drv_context *drvc;
-//	GSList *devices;
-//
-//	(void)options;
-//
-//	devices = NULL;
-//	drvc = di->context;
-//	drvc->instances = NULL;
-//
-//	/* TODO: scan for devices, either based on a SR_CONF_CONN option
-//	 * or on a USB scan. */
-//
-//	return devices;
 }
 
 static int dev_open(struct sr_dev_inst *sdi)
 {
-	(void)sdi;
-
 	sr_dbg("litescope::dev_open\n");
-	/* TODO: get handle from sdi->conn and open it. */
-
+	if (sr_scpi_open(sdi->conn) != SR_OK)
+		return SR_ERR;
+	if (!litescope_poke(sdi))
+		return SR_ERR;
 	return SR_OK;
 }
 
 static int dev_close(struct sr_dev_inst *sdi)
 {
-	(void)sdi;
-
 	sr_dbg("litescope::dev_close\n");
-	/* TODO: get handle from sdi->conn and close it. */
-
-	return SR_OK;
+	return sr_scpi_close(sdi->conn);
 }
 
 
@@ -334,6 +282,10 @@ static int config_get(uint32_t key, GVariant **data,
 
 	ret = SR_OK;
 	switch (key) {
+	case SR_CONF_TRIGGER_MATCH:
+	{
+		break;
+	}
 	/* TODO */
 	default:
 		return SR_ERR_NA;
@@ -354,7 +306,10 @@ static int config_set(uint32_t key, GVariant *data,
 
 	ret = SR_OK;
 	switch (key) {
-	/* TODO */
+	case SR_CONF_TRIGGER_MATCH:
+		break;
+	case SR_CONF_LIMIT_SAMPLES:
+		break;
 	default:
 		ret = SR_ERR_NA;
 	}
@@ -396,7 +351,7 @@ static int config_list(uint32_t key, GVariant **data,
 		sr_dbg("litescope::config_list 2 SR_CONF_DEVICE_OPTIONS %p\n", cg);
 		if (!cg)
 			return STD_CONFIG_LIST(key, data, sdi, cg, NULL, drvopts, devopts);
-		//*data = std_gvar_array_u32(ARRAY_AND_SIZE(devopts_cg_analog));
+		*data = std_gvar_array_u32(ARRAY_AND_SIZE(devopts_cg));
 		break;
 
 	case SR_CONF_TRIGGER_MATCH:
@@ -414,19 +369,36 @@ static int config_list(uint32_t key, GVariant **data,
 
 static int dev_acquisition_start(const struct sr_dev_inst *sdi)
 {
-	/* TODO: configure hardware, reset acquisition state, set up
-	 * callbacks and send header packet. */
+	assert(sdi != NULL);
+	struct dev_context *devc;
+	devc = sdi->priv;
+	assert(devc != NULL);
+	struct sr_scpi_dev_inst *scpi;
+	scpi = sdi->conn;
+	assert(scpi != NULL);
 
-	(void)sdi;
+	devc->state = LITESCOPE_STATE_INIT;
+	while(!litescope_setup(sdi));
+
+	sr_scpi_source_add(
+		sdi->session, scpi, G_IO_IN, 50,
+		litescope_receive_data, (void *)sdi);
+
+	std_session_send_df_header(sdi);
 
 	return SR_OK;
 }
 
 static int dev_acquisition_stop(struct sr_dev_inst *sdi)
 {
-	/* TODO: stop acquisition. */
+	struct sr_scpi_dev_inst *scpi;
+	struct dev_context *devc;
 
-	(void)sdi;
+	std_session_send_df_end(sdi);
+
+	devc = sdi->priv;
+	scpi = sdi->conn;
+	sr_scpi_source_remove(sdi->session, scpi);
 
 	return SR_OK;
 }

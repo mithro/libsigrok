@@ -96,6 +96,10 @@ struct etherbone_packet* etherbone_new(enum etherbone_type type, size_t record_v
 		pkt->records[0].hdr.wcount = record_values;
 		pkt->records[0].hdr.rcount = 0;
 		break;
+	case ETHERBONE_UNKNOWN:
+		pkt->records[0].hdr.rcount = 0;
+		pkt->records[0].hdr.wcount = 0;
+		break;
 	}
 	return pkt;
 }
@@ -116,10 +120,7 @@ struct etherbone_packet* etherbone_add_record_values(struct etherbone_packet* pk
 	return etherbone_grow(pkt);
 }
 
-bool etherbone_check(struct etherbone_packet* pkt) {
-	// Convert from network
-	etherbone_betoh(pkt);
-
+bool etherbone_check_hostwrite(struct etherbone_packet* pkt) {
 	assert(pkt->hdr.magic == ETHERBONE_MAGIC);	/* magic */
 	assert(pkt->hdr.version == ETHERBONE_VERSION);	/* version */
 	assert(pkt->hdr.addr_size == ETHERBONE_32BITS);	/* 32 bits address */
@@ -132,7 +133,7 @@ bool etherbone_check(struct etherbone_packet* pkt) {
 
 	// Write from client to us, IE a response to our read request.
 	assert(wcount > 0);
-	assert(pkt->hdr.no_reads);
+	//assert(pkt->hdr.no_reads);
 
 	return true;
 }

@@ -237,12 +237,171 @@ int csr_data_width(const GHashTable* csr_table) {
 	return data_width;
 }
 
-int _eb_csr_read(
+enum eb_state eb_poll_packet(
+		bool expect_response,
+		enum eb_state state,
+		struct sr_scpi_dev_inst *conn,
+		struct etherbone_packet** request,
+		struct etherbone_packet** response) {
+	assert(request != NULL);
+	assert(response != NULL);
+	sr_spew("eb_poll_packet: %d %d %p req:%p res:%p\n", expect_response, state, conn, *request, *response);
+
+	switch(state) {
+	case EB_STATE_IDLE:
+	{
+		assert((*request) != NULL);
+		assert((*response) == NULL);
+		state = EB_STATE_SEND_HEADnBODY;
+		break;
+	}
+
+	case EB_STATE_SEND_HEAD:
+	{
+		assert((*request) != NULL);
+		assert((*response) == NULL);
+
+		// Fix the endianess of the packet
+		(*request) = etherbone_htobe(*request);
+
+		sr_spew("Sending request header\n");
+		// - packet header + record[0] header
+		const size_t data_size = ETHERBONE_PACKET_MIN;
+
+		int r = sr_scpi_write_data(
+			conn, (char*)(*request), data_size);
+		sr_spew("Sent header bytes: %d (wanted %zu)\n", r, data_size);
+		assert(r == data_size);
+
+		state = EB_STATE_SEND_BODY;
+		break;
+	}
+
+	case EB_STATE_SEND_BODY:
+	{
+		assert((*request) != NULL);
+		assert((*response) == NULL);
+
+		sr_spew("Sending request body\n");
+		// - record[0].values
+		const size_t data_size = etherbone_size(*request) - ETHERBONE_PACKET_MIN;
+
+		int r = sr_scpi_write_data(
+			conn, ((char*)(*request))+ETHERBONE_PACKET_MIN, data_size);
+		sr_spew("Sent body bytes: %d (wanted %zu)\n", r, data_size);
+		assert(r == data_size);
+
+		if (expect_response) {
+			state = EB_STATE_RECV_HEAD;
+		} else {
+			state = EB_STATE_COMPLETE;
+		}
+		break;
+	}
+
+	case EB_STATE_SEND_HEADnBODY:
+	{
+		assert((*request) != NULL);
+		assert((*response) == NULL);
+
+		// Fix the endianess of the packet
+		(*request) = etherbone_htobe(*request);
+
+		sr_spew("Sending request header+body\n");
+		// - packet header + record[0] header
+		const size_t data_size = etherbone_size(*request);
+
+		int r = sr_scpi_write_data(
+			conn, ((char*)(*request)), data_size);
+		sr_spew("Sent header+body bytes: %d (wanted %zu)\n", r, data_size);
+		assert(r == data_size);
+
+		if (expect_response) {
+			state = EB_STATE_RECV_HEAD;
+		} else {
+			state = EB_STATE_COMPLETE;
+		}
+		break;
+	}
+
+	case EB_STATE_RECV_HEAD:
+	{
+		assert((*request) != NULL);
+		assert((*response) == NULL);
+
+		sr_spew("Receiving response header\n");
+		// - packet header + record[0] header
+		const size_t data_size = ETHERBONE_PACKET_MIN;
+
+		(*response) = etherbone_new(ETHERBONE_UNKNOWN, 0);
+		int r = sr_scpi_read_data(
+			conn, (char*)(*response), data_size);
+		sr_spew("Response header bytes: %d (wanted %zu)\n", r, data_size);
+		assert(r == data_size);
+
+		// Sanity check
+		if ((*request)->records[0].hdr.wcount > 0) {
+			assert((*response)->records[0].hdr.wcount == 0);
+			assert((*response)->records[0].hdr.rcount == 0);
+		} else if ((*request)->records[0].hdr.rcount > 0) {
+
+		} else {
+			assert(false);
+		}
+
+		state = EB_STATE_RECV_BODY;
+		break;
+	}
+
+	case EB_STATE_RECV_BODY:
+	{
+		assert((*request) != NULL);
+		assert((*response) != NULL);
+
+		sr_spew("Receiving Response body\n");
+		// - record[0].values
+		const size_t data_size = etherbone_size(*response) - ETHERBONE_PACKET_MIN;
+
+		(*response) = etherbone_grow(*response);
+		int r = sr_scpi_read_data(
+			conn, ((char*)(*response))+ETHERBONE_PACKET_MIN, data_size);
+		sr_spew("Response body bytes: %d (wanted %zu)\n", r, data_size);
+		assert(r == data_size);
+
+		// Fix the endianess of the response
+		etherbone_betoh(*response);
+
+		assert(etherbone_check_hostwrite(*response));
+
+		state = EB_STATE_COMPLETE;
+		break;
+	}
+
+	case EB_STATE_COMPLETE:
+	{
+		assert((*request) != NULL);
+		assert((*response) != NULL);
+		break;
+	}
+
+	default:
+		assert(false);
+
+	}
+
+	return state;
+}
+
+int eb_csr_read_bytes(
 		struct sr_scpi_dev_inst *conn,
 		const GHashTable* csr_table,
 		const char* csr_name,
 		uint8_t* output_ptr,
 		size_t output_ptr_width) {
+
+	struct etherbone_packet* request = NULL;
+	struct etherbone_packet* response = NULL;
+
 	assert(conn != NULL);
 
 	assert(csr_table != NULL);
@@ -250,6 +409,9 @@ int _eb_csr_read(
 	assert(strlen(csr_name) > 0);
 	struct csr_entry* csr = g_hash_table_lookup((GHashTable*)csr_table, csr_name);
 	assert(csr != NULL);
+	char* csr_str = csr_entry_str(csr);
+	sr_spew("Reading from %s", csr_str);
+	free(csr_str);
 	assert(csr->type == CSR_REGISTER);
 
 	int data_width = csr_data_width(csr_table);
@@ -258,45 +420,30 @@ int _eb_csr_read(
 	uint32_t csr_data_mask = ~(-1 << data_width);
 	assert(csr_data_mask == 0xff);
 
+	size_t read_size = csr->location.width;
+	sr_spew("Reading from %zu@%zu locations -> %zu\n", read_size, data_width, output_ptr_width);
 	assert(output_ptr != NULL);
-
 	assert(output_ptr_width > 0);
-	assert((output_ptr_width*8/data_width) == csr->location.width);
+	assert((output_ptr_width*8/data_width) == read_size);
+	request = etherbone_new(ETHERBONE_READ, read_size);
+	//(*request)->record_hdr.base_ret_addr = 0;
 
-	struct etherbone_packet* req = etherbone_new(ETHERBONE_READ, csr->location.width);
-	//req->record_hdr.base_ret_addr = 0;
-
+	// Copy the read addresses into the request
 	uint32_t addr = csr->location.addr;
-	for(unsigned i = 0; i < csr->location.width; i++) {
+	for(unsigned i = 0; i < read_size; i++) {
 		sr_spew("Reading address: %x\n", addr);
-		req->records[0].values[i].read_addr = addr;
+		request->records[0].values[i].read_addr = addr;
 		addr += sizeof(uint32_t);
 	}
 
 	// Send the request
-	size_t req_size = etherbone_size(req);
-	sr_spew("Request Packet size: %zu\n", etherbone_size(req));
-	size_t r = sr_scpi_write_data(conn, (char*)etherbone_htobe(req), req_size);
-	assert(r == req_size);
-	sr_spew("Request Sent\n");
-
-	// Read the response
-	// - packet header + record[0] header
-	struct etherbone_packet* res = etherbone_new(ETHERBONE_WRITE, 0);
-	size_t res_hdr_size = etherbone_size(res);
-	r = sr_scpi_read_data(conn, (char*)res, res_hdr_size);
-	sr_spew("Response size: %zu\n", r);
-	assert(r == res_hdr_size);
-
-	// - record[0].values
-	assert(res->records[0].hdr.wcount == req->records[0].hdr.rcount);
-	res = etherbone_grow(res);
-	size_t res_full_size = etherbone_size(res);
-	r = sr_scpi_read_data(conn, (char*)(&(res->records[0].values[0])), res_full_size-res_hdr_size);
-
-	sr_spew("Response size: %zu\n", r);
-	assert(r == (res_full_size-res_hdr_size));
-	assert(etherbone_check(res));
+	assert(request != NULL);
+	assert(response == NULL);
+	for (enum eb_state s = EB_STATE_IDLE; s != EB_STATE_COMPLETE ; ) {
+		s = eb_poll_packet(true, s, conn, &request, &response);
+	}
+	assert(request != NULL);
+	assert(response != NULL);
 
 	// Copy the data out of the response packet
 	for(unsigned i = 0; i < csr->location.width; i++) {
@@ -310,33 +457,39 @@ int _eb_csr_read(
 		assert(dst < csr->location.width);
 		assert(src < csr->location.width);
 
-		*(output_ptr + dst) = (uint8_t)(res->records[0].values[src].write_value & csr_data_mask);
+		//sr_spew("data %x\n", response->records[0].values[src].write_value);
+
+		*(output_ptr + dst) = (uint8_t)(response->records[0].values[src].write_value & csr_data_mask);
 	}
 
-	free(req);
-	free(res);
+	// All done
+	free(request);
+	free(response);
 	return SR_OK;
 }
 
-
-int _eb_csr_write(
+int eb_csr_write_bytes(
 		struct sr_scpi_dev_inst *conn,
 		const GHashTable* csr_table,
 		const char* csr_name,
 		uint8_t* input_ptr,
 		size_t input_ptr_width) {
+
+	struct etherbone_packet* request = NULL;
+	struct etherbone_packet* response = NULL;
+
 	assert(conn != NULL);
 
 	assert(csr_table != NULL);
 	assert(csr_name != NULL);
 	assert(strlen(csr_name) > 0);
 	struct csr_entry* csr = g_hash_table_lookup((GHashTable*)csr_table, csr_name);
-	if (csr == NULL) {
-		return SR_ERR;
-	}
-	if (csr->type != CSR_REGISTER) {
-		return SR_ERR;
-	}
+	char* csr_str = csr_entry_str(csr);
+	sr_spew("Writing to %s", csr_str);
+	free(csr_str);
+	assert(csr != NULL);
+	assert(csr->type == CSR_REGISTER);
+	assert(csr->mode == CSR_RW);
 
 	int data_width = csr_data_width(csr_table);
 	assert(data_width == 8);
@@ -344,40 +497,50 @@ int _eb_csr_write(
 	uint32_t csr_data_mask = ~(-1 << data_width);
 	assert(csr_data_mask == 0xff);
 
-	assert(input_ptr != NULL);
-
-	assert(input_ptr_width > 0);
-	assert((input_ptr_width*8/data_width) == csr->location.width);
-
 	size_t write_size = csr->location.width;
-	sr_spew("Write size: %zu\n", write_size);
-	struct etherbone_packet* req = etherbone_new(ETHERBONE_WRITE, write_size);
+	sr_spew("Writing to %zu@%zu locations <- %zu\n", write_size, data_width, input_ptr_width);
+	assert(input_ptr != NULL);
+	assert(input_ptr_width > 0);
+	assert((input_ptr_width*8/data_width) == write_size);
+	request = etherbone_new(ETHERBONE_WRITE, write_size);
 
-	req->records[0].hdr.base_write_addr = csr->location.addr;
+	// Copy the data into the request
+	sr_spew("Writing to location: %x\n", csr->location.addr);
+	request->records[0].hdr.base_write_addr = csr->location.addr;
 	for(unsigned i = 0; i < csr->location.width; i++) {
 #if __BYTE_ORDER__ != __ORDER_BIG_ENDIAN__
-		req->records[0].values[i].write_value = input_ptr[csr->location.width-i-1];
+		request->records[0].values[i].write_value = input_ptr[csr->location.width-i-1];
 #else
-		req->records[0].values[i].write_value = input_ptr[i];
+		request->records[0].values[i].write_value = input_ptr[i];
 #endif
-		sr_spew("Writing value: %x\n", req->records[0].values[i].write_value);
+		sr_spew("Writing value: %x\n", request->records[0].values[i].write_value);
 	}
 
 	// Send the request
-	size_t req_size = etherbone_size(req);
-	sr_spew("Send Packet size: %zu\n", etherbone_size(req));
-	size_t r = sr_scpi_write_data(conn, (char*)etherbone_htobe(req), req_size);
-	assert(r == req_size);
-	sr_spew("Sent\n");
+	assert(request != NULL);
+	assert(response == NULL);
+	for (enum eb_state s = EB_STATE_IDLE; s != EB_STATE_COMPLETE ; ) {
+		s = eb_poll_packet(false, s, conn, &request, &response);
+	}
+	assert(request != NULL);
+	assert(response == NULL);
 
-	free(req);
-
+	// All done
+	free(request);
+	assert(response == NULL);
 	return SR_OK;
 }
 
-
-EB_CSR_FUNCTIONS(bool)
 EB_CSR_FUNCTIONS(uint8_t)
 EB_CSR_FUNCTIONS(uint16_t)
 EB_CSR_FUNCTIONS(uint32_t)
 EB_CSR_FUNCTIONS(uint64_t)
+
+int eb_csr_read_bool(struct sr_scpi_dev_inst *conn, const GHashTable* csr_table, const char* csr_name, bool* output_ptr) {
+	return eb_csr_read_bytes(
+		conn, csr_table, csr_name, (uint8_t*)output_ptr, sizeof(bool));
+}
+int eb_csr_write_bool(struct sr_scpi_dev_inst *conn, const GHashTable* csr_table, const char* csr_name, bool in_value) {
+	return eb_csr_write_bytes(
+		conn, csr_table, csr_name, (uint8_t*)&in_value, sizeof(bool));
+}

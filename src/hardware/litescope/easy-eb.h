@@ -20,7 +20,7 @@
 
 #include "cassert.h"
 
-#define ETHERBONE_PORT 1234
+#define ETHERBONE_PORT 		1234
 
 #define ETHERBONE_MAGIC 	0x4e6f
 #define ETHERBONE_VERSION 	1
@@ -30,6 +30,7 @@
 #define ETHERBONE_64BITS 	1 << 3
 
 enum etherbone_type {
+	ETHERBONE_UNKNOWN = 0,
 	ETHERBONE_READ = 1,
 	ETHERBONE_WRITE = 2,
 };
@@ -44,6 +45,7 @@ struct etherbone_record_value {
 
 #define ETHERBONE_RECORD_VALUE_LENGTH \
 	4
+
 CASSERT(sizeof(struct etherbone_record_value) == ETHERBONE_RECORD_VALUE_LENGTH, easy_eb_h);
 
 // When reading/writing to a FIFO, you don't increase the address after each write.
@@ -79,12 +81,13 @@ struct etherbone_record_header {
 
 #define ETHERBONE_RECORD_HEADER_LENGTH \
 	(4+sizeof(uint32_t))
+
 CASSERT(sizeof(struct etherbone_record_header) == ETHERBONE_RECORD_HEADER_LENGTH, easy_eb_h);
 
 struct etherbone_record {
 	struct etherbone_record_header hdr;
 	struct etherbone_record_value values[];
-} __attribute__((packed, scalar_storage_order("big-endian")));
+} __attribute__((packed, aligned(8)));
 
 struct etherbone_packet_header {
 	uint16_t magic;
@@ -108,19 +111,20 @@ struct etherbone_packet_header {
 	uint8_t port_size	: 4;
 #endif
 	uint32_t padding;
-} __attribute__((packed, aligned(8)));
+} __attribute__((packed));
 
 #define ETHERBONE_PACKET_HEADER_LENGTH \
 	8
+
 CASSERT(sizeof(struct etherbone_packet_header) == ETHERBONE_PACKET_HEADER_LENGTH, easy_eb_h);
 
 struct etherbone_packet {
 	struct etherbone_packet_header hdr;
 	struct etherbone_record records[1];
-} __attribute__((packed, scalar_storage_order("big-endian"), aligned(8)));
+} __attribute__((packed));
 
 #define ETHERBONE_PACKET_MIN \
-	ETHERBONE_PACKET_HEADER_LENGTH + ETHERBONE_RECORD_HEADER_LENGTH;
+	(ETHERBONE_PACKET_HEADER_LENGTH + ETHERBONE_RECORD_HEADER_LENGTH)
 
 struct etherbone_packet* etherbone_htobe(struct etherbone_packet* pkt);
 struct etherbone_packet* etherbone_betoh(struct etherbone_packet* pkt);
@@ -142,6 +146,6 @@ struct etherbone_packet* etherbone_grow(struct etherbone_packet* pkt);
 
 struct etherbone_packet* etherbone_add_record_values(struct etherbone_packet* pkt, size_t num_records);
 
-bool etherbone_check(struct etherbone_packet* pkt);
+bool etherbone_check_hostwrite(struct etherbone_packet* pkt);
 
 #endif

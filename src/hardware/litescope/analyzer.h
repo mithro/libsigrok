@@ -38,21 +38,6 @@ struct analyzer {
 	GSList* channel_groups;
 };
 
-// struct sr_channel_group *cg = g_malloc0(sizeof(struct sr_channel_group));
-//
-//	struct sr_channel* ch = g_malloc0(sizeof(struct sr_channel));
-//	ch->index = index;
-//	ch->type = SR_CHANNEL_LOGIC;
-//	ch->enabled = i == 0;
-//	ch->name = g_strdup(name);
-//	cg->channels = g_slist_append(cg->channels, ch);
-//
-//	//struct sr_channel* ch = sr_channel_new(
-//	//	sdi, g_slist_length(cg->channels), SR_CHANNEL_LOGIC, i == 0, g_strdup(temp_buf));
-//
-//
-// g_slist_append(analyzer->channel_groups, cg);
-
 GHashTable* analyzer_signals(const struct analyzer* an, size_t group);
 void analyzer_free(struct analyzer** an);
 
@@ -68,10 +53,5 @@ char* analyzer_config_str(const struct analyzer_config* config, size_t channel_g
 		sr_ ## LEVEL ("%s\n", msg); \
 		g_free(msg); \
 	} while(false)
-
-//int analyzer_run(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
-//bool analyzer_check(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
-//int analyzer_download(struct sr_scpi_dev_inst *conn, const struct analyzer* an);
-
 
 #endif

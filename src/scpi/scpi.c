@@ -334,12 +334,7 @@ SR_PRIV int sr_scpi_read_begin(struct sr_scpi_dev_inst *scpi)
 SR_PRIV int sr_scpi_read_data(struct sr_scpi_dev_inst *scpi,
 			char *buf, int maxlen)
 {
-	int r = scpi->read_data(scpi->priv, buf, maxlen);
-	for (int i = 0; i < MIN(maxlen, r); i++) {
-		printf("%02hhx ", buf[i]);
-	}
-	printf("\n");
-	return r;
+	return scpi->read_data(scpi->priv, buf, maxlen);
 }
 
 /**
@@ -354,11 +349,6 @@ SR_PRIV int sr_scpi_read_data(struct sr_scpi_dev_inst *scpi,
 SR_PRIV int sr_scpi_write_data(struct sr_scpi_dev_inst *scpi,
 			char *buf, int maxlen)
 {
-	for (int i = 0; i < maxlen; i++) {
-		printf("%02hhx ", buf[i]);
-	}
-	printf("\n");
-
 	return scpi->write_data(scpi->priv, buf, maxlen);
 }
 

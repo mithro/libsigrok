@@ -71,6 +71,8 @@ static struct sr_key_info sr_key_info_config[] = {
 		"Serial communication", NULL},
 	{SR_CONF_MODBUSADDR, SR_T_UINT64, "modbusaddr",
 		"Modbus slave address", NULL},
+	{SR_CONF_CONFIGDIR, SR_T_STRING, "configdir",
+		"Driver config dir", NULL},
 
 	/* Device (or channel group) configuration */
 	{SR_CONF_SAMPLERATE, SR_T_UINT64, "samplerate",
@@ -212,6 +214,10 @@ static struct sr_key_info sr_key_info_config[] = {
 	{SR_CONF_TEST_MODE, SR_T_STRING, "test_mode",
 		"Test mode", NULL},
 
+	{SR_CONF_SCAN_OPTIONS, SR_T_STRING, "options_scan",
+		"Options Scan", NULL},
+	{SR_CONF_DEVICE_OPTIONS, SR_T_STRING, "options_device",
+		"Options Device", NULL},
 	ALL_ZERO
 };
 

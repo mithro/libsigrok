@@ -195,6 +195,8 @@ static struct sr_dev_inst *probe_device(struct sr_scpi_dev_inst *scpi)
 	devc->trigger_mask[0] = 0xff;
 	devc->trigger_mask[1] = 0xff;
 	devc->trigger_value = g_malloc0_n(sizeof(uint8_t), devc->sample_width);
+	devc->trigger_mask[0] = 0x00;
+	devc->trigger_mask[1] = 0x00;
 	devc->samples_data = g_malloc0_n(devc->sample_width, devc->samples_max);
 
 	sdi->priv = devc;

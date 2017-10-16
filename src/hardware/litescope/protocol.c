@@ -161,7 +161,7 @@ SR_PRIV bool litescope_setup(struct sr_dev_inst *sdi) {
 	// Flush the storage
 	case LITESCOPE_STATE_FLUSHING:
 	{
-		sr_spew("Waiting for trigger\n");
+		sr_spew("Flushing storage\n");
 		while (true) {
 			bool valid = false;
 			if (eb_csr_read_bool(
